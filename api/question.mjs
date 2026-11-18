@@ -1,7 +1,7 @@
 import { challengeSchema, validateChallenge } from '../tutor.mjs';
 
 const endpoint = 'https://ai-gateway.vercel.sh/v1/chat/completions';
-const defaultModel = 'openai/gpt-4.1-mini';
+const defaultModel = 'nvidia/nemotron-3.5-lightning-free';
 
 function offline(res, reason) {
   res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=30');
@@ -18,17 +18,19 @@ export default async function handler(req, res) {
   if (params.size !== 1 || !/^[0-3]$/.test(variant ?? '')) {
     return res.status(400).json({ error: 'Choose a known challenge variant' });
   }
-  const token = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || req.headers['x-vercel-oidc-token'];
+  const token = process.env.AI_GATEWAY_API_KEY || req.headers['x-vercel-oidc-token'] || process.env.VERCEL_OIDC_TOKEN;
   if (!token) return offline(res, 'credentials-unavailable');
 
   const coefficient = -2 - Number(variant);
+  const model = process.env.AI_GATEWAY_MODEL || defaultModel;
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
       signal: AbortSignal.timeout(4200),
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: process.env.AI_GATEWAY_MODEL || defaultModel,
+        model,
+        ...(model === defaultModel ? { reasoning: { effort: 'none' } } : {}),
         max_tokens: 120,
         messages: [
           { role: 'system', content: 'Create one Class 8 linear equation ax + b = c. Return the four integer fields a, b, c and x only. The listed x must be the solution. Use small values suitable for mental arithmetic.' },
@@ -41,7 +43,9 @@ export default async function handler(req, res) {
       }),
     });
     if (!response.ok) {
-      console.warn('AI Gateway challenge response:', response.status);
+      const detail = await response.json().catch(() => null);
+      const code = detail?.error?.code || detail?.error?.type;
+      console.warn('AI Gateway challenge response:', response.status, typeof code === 'string' && /^[\w-]{1,72}$/.test(code) ? code : '');
       return offline(res, 'gateway-unavailable');
     }
     const payload = await response.json();
