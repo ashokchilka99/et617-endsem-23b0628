@@ -93,6 +93,14 @@ function newSession(seed, repeat = false) {
   };
 }
 
+function extendSavedSession(s) {
+  if (s?.questions?.length !== 5) return;
+  const extra = plan(s.seed, true).slice(4, 7);
+  s.questions.splice(s.step === 4 ? 5 : 4, 0, ...extra);
+}
+
+extendSavedSession(data.session);
+
 function start() {
   demo = null;
   if (!data.session) {
@@ -116,14 +124,6 @@ function record(type, details = {}) {
   if (s) s.events.push({ type, step: s.step + 1, at: Date.now(), ...details });
 }
 
-function phaseOf(s) {
-  if (s.view === 'recap') return 4;
-  if (s.view === 'worked') return 1;
-  return s.step === 0 ? 0 : s.step === 4 ? 3 : 2;
-}
-
-const phaseNames = ['Warm-up', 'See how', 'Practice', 'Check', 'Recap'];
-
 function render(focus = false) {
   document.title = (route === 'home' ? 'Balance Lab · Class 8 Algebra' : ({ learn: 'Practice', concept: 'Worked example', progress: 'Progress', about: 'About' })[route] + ' · Balance Lab');
   header.innerHTML = `<div class="site-header wrap">
@@ -137,7 +137,7 @@ function render(focus = false) {
     </nav>
     <span class="course">ET 617</span>
   </div>`;
-  footer.innerHTML = `<div class="wrap footer-inner"><span><strong>Balance Lab</strong> · Class 8 Algebra</span><span>ET 617 <b>·</b> 23b0628</span></div>`;
+  footer.innerHTML = `<div class="wrap footer-inner"><span><strong>Balance Lab</strong> · Class 8 Algebra</span><span>ET 617 <b>·</b> 23B0628</span></div>`;
 
   switch (route) {
     case 'learn': main.innerHTML = learning(); break;
@@ -177,7 +177,7 @@ function home() {
       <div class="hero-copy">
         <p class="eyebrow"><span></span> Class 8 mathematics</p>
         <h1 tabindex="-1">Find the<br><em>balance.</em></h1>
-        <p class="lede">Get comfortable with linear equations, one small step at a time.</p>
+        <p class="lede">Hi, Meera. Let’s practise linear equations one small step at a time.</p>
         <div class="hero-actions">
           <button class="button primary" data-action="start">${active ? 'Resume practice' : 'Start practice'} ${icon('arrow')}</button>
           <a class="button quiet" href="#concept">${icon('book', 18)} See an example</a>
@@ -203,14 +203,16 @@ function home() {
 }
 
 function learningShell(s, inner) {
-  const phase = phaseOf(s);
+  const total = s.questions.length;
+  const step = s.view === 'recap' ? total : s.step + 1;
   return `<div class="wrap learning">
     <div class="lesson-top"><a class="button quiet back" href="#home">${icon('back',17)} Home</a>
-    ${s.view !== 'recap' ? ' <button class="button secondary" data-action="pause">' + icon('pause', 17) + (demo ? 'Exit demo' : 'Pause & save') + '</button>' : ''}</div>
+    ${s.view !== 'recap' ? ' <button class="button secondary" data-action="pause">' + icon('pause', 17) + (demo ? 'Exit demo' : 'Save & stop') + '</button>' : ''}</div>
     ${s.demoType ? '<p class="notice">Demo session · Your practice progress is unchanged.</p>' : ''}
-    <ol class="stepper" aria-label="Session steps">
-    ${phaseNames.map((p, i) => `<li class="${i < phase ? 'past' : i === phase ? 'current' : ''}" ${i === phase ? 'aria-current="step"' : ''}><span>${i < phase ? icon('check', 13) : i + 1}</span>${p}</li>`).join('')}
-    </ol>
+    <div class="session-progress">
+      <label for="session-bar">Step ${step} of ${total}</label>
+      <progress id="session-bar" value="${step}" max="${total}"></progress>
+    </div>
     ${inner}
   </div>`;
 }
@@ -287,7 +289,7 @@ function activity(s) {
   const feedback = s.feedback;
   let feedbackTitle = '';
   if (feedback) {
-    feedbackTitle = feedback.correct ? 'That works' : feedback.code === 'clarify' ? 'A little more detail' : 'Let’s look at that step';
+    feedbackTitle = feedback.correct ? 'That works' : "Not yet, let's look together.";
     if (feedback.route === 'challenge') feedbackTitle = 'Ready for a step up';
   }
   const buttons = feedback ? `<div class="actions">
@@ -302,7 +304,7 @@ function activity(s) {
     </div>`;
   const model = s.model ? `<div class="callout model"><strong>Worked answer</strong><p>${esc(q.solution)}</p><button class="button secondary" type="button" data-action="advance">Continue ${icon('arrow', 16)}</button></div>` : '';
   return `<section class="panel lesson-card activity">
-    <p class="eyebrow"><span></span> ${esc(q.label)} ${!s.branch ? '<b>·</b> Task ' + (s.step + 1) + ' of 5' : ''}</p>
+    <p class="eyebrow"><span></span> ${esc(q.label)}</p>
     <h1 tabindex="-1">${esc(q.title)}</h1><p class="intro">${esc(q.prompt)}</p>
     ${workedScaffold(q.visual)}
     ${branchText ? '<div class="callout"><strong>Another way to see it</strong><p>' + esc(branchText) + '</p></div>' : ''}
@@ -326,7 +328,7 @@ function recap(s, isDemo) {
   const nextSkill = objectives.find(([key]) => s.ability?.[key] !== 'independent');
   return `<section class="panel lesson-card recap">
     <div class="icon-chip green">${icon('check', 25)}</div>
-    <h1 tabindex="-1">Session complete.</h1>
+    <h1 tabindex="-1">Session complete</h1>
     <p class="intro">Take a moment to notice what you can do now.</p>
     <ul class="skills-list">${objectives.map(([key, title, detail]) => `<li>
       <span class="skill-status ${s.ability?.[key] ? 'done' : ''}">${s.ability?.[key] ? icon('check', 14) : ''}</span>
@@ -378,7 +380,7 @@ function about() {
       <div><dt>P4-T3</dt><dd>Linear equations in one variable · Class 8</dd></div>
       <div><dt>L5</dt><dd>Learner repeating the topic after failing once</dd></div>
       <div><dt>C4</dt><dd>10-minute sessions with pause and resume</dd></div>
-      <div><dt>ID</dt><dd>23b0628</dd></div>
+      <div><dt>ID</dt><dd>23B0628</dd></div>
     </dl></section>
     <section class="panel section-card"><h2>What counts as learning</h2>
       <p>A learner who can recite “move it across” may still change only one side or divide only the x term. The worked example uses a balance to show why a step is valid. The repair task asks the learner to find the first mistake and correct it before attempting a fresh equation.</p>
@@ -409,7 +411,7 @@ function nextCore(s) {
   const outcome = { explain: 'balance', repair: 'repair', transfer: 'solve' }[q.kind];
   if (solved && outcome) s.ability[outcome] = prior.supported ? 'supported' : 'independent';
 
-  if (s.step === 4) {
+  if (s.step === s.questions.length - 1) {
     s.view = 'recap';
     record('session_completed', { ability: s.ability });
     if (!demo) {

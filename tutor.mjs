@@ -94,14 +94,20 @@ export function draw(seed, min, max) {
 }
 
 export function plan(seed, repeat) {
-  if (!repeat) return [inverseItem(first), solveItem('solve', second), explainItem(second), repairItem(repair), solveItem('transfer', transfer)];
   const a = draw(seed + 1, 2, 5);
   const solve = { a, b: draw(seed + 2, 2, 8), x: draw(seed + 3, 2, 7) };
   const divisor = draw(seed + 4, 2, 5);
+  const flex = [
+    inverseItem({ a: 1, b: -3, x: draw(seed + 22, 5, 9) }),
+    solveItem('solve', { a: 2, b: 3, x: draw(seed + 23, 2, 8) }),
+    repairItem({ a: 3, b: 6, x: draw(seed + 24, 2, 7) }),
+  ].map(question => ({ ...question, flex: true }));
+  if (!repeat) return [inverseItem(first), solveItem('solve', second), explainItem(second), repairItem(repair), ...flex, solveItem('transfer', transfer)];
   return [
     inverseItem({ a: 1, b: draw(seed + 5, 2, 9), x: draw(seed + 6, 3, 11) }),
     solveItem('solve', solve), explainItem(solve),
     repairItem({ a: divisor, b: divisor * draw(seed + 7, 2, 6), x: draw(seed + 8, 2, 8) }),
+    ...flex,
     solveItem('transfer', { a: draw(seed + 9, 2, 6), b: -draw(seed + 10, 2, 8), x: draw(seed + 11, 2, 8) }),
   ];
 }
@@ -209,7 +215,7 @@ function verdict(code, message) {
 }
 
 export function firstRoute(result, history, usedBranch, step) {
-  if (usedBranch || step === 4) return '';
+  if (usedBranch || step >= 7) return '';
   if (!result.correct && ['inverse', 'balance', 'division', 'calculation'].includes(result.code)) return 'probe';
   const previous = history[step - 1];
   const current = history[step];

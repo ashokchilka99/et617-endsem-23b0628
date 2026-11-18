@@ -112,6 +112,10 @@ svg { flex: 0 0 auto; vertical-align: middle; }
 .learning { width: min(100% - 72px, 820px); }
 .reading-page { width: min(100% - 72px, 960px); }
 .lesson-top { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 11px; }
+.session-progress { margin-bottom: 15px; color: var(--muted); font-size: .87rem; font-weight: 670; }
+.session-progress progress { display: block; width: 100%; height: 8px; margin-top: 5px; border: 0; border-radius: 8px; accent-color: #79659e; background: #e8e1ee; }
+.session-progress progress::-webkit-progress-bar { background: #e8e1ee; border-radius: 8px; }
+.session-progress progress::-webkit-progress-value { background: #79659e; border-radius: 8px; }
 .stepper { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin: 0 0 15px; padding: 8px 10px; border-radius: 14px; background: #f0edf4; list-style: none; }
 .stepper li { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 5px; color: var(--subtle); font-size: .82rem; text-align: center; border-radius: 9px; }
 .stepper li span { width: 22px; height: 22px; flex: 0 0 auto; border-radius: 50%; background: #e5deee; display: grid; place-items: center; font-size: .72rem; font-weight: 725; }
