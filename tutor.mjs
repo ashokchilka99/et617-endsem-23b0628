@@ -40,13 +40,27 @@ function solveItem(kind, values) {
   const asked = p.undo + ' ' + n + ' on both sides';
   const opWrong = p.opposite + ' ' + n + ' on both sides';
   return {
-    ...p, kind,
+    ...p, kind, verifyExpression: kind === 'transfer',
     label: kind === 'transfer' ? 'Independent check' : kind === 'challenge' ? 'A step up' : 'Solve and check',
     title: kind === 'challenge' ? 'Try a negative coefficient' : 'What value makes this true?',
-    prompt: 'Solve for x, then use your answer to find the value of the left side.',
+    prompt: kind === 'transfer'
+      ? 'Solve for x, then write the left side with your value in place of x.'
+      : 'Solve for x, then use your answer to find the value of the left side.',
     options: kind === 'solve' ? null : choices(asked, [opWrong, p.undo + ' ' + n + ' on the left only']),
     hint: 'Start with the ' + (p.b < 0 ? '−' : '+') + n + ' term. What operation would make it zero on the left?',
     solution: asked + ' to get ' + term(p.a) + ' = ' + fmt(p.a * p.x) + '. Divide both sides by ' + fmt(p.a) + ' to get x = ' + fmt(p.x) + '. Substitution gives ' + fmt(p.c) + '.',
+  };
+}
+
+function stepItem(values) {
+  const p = parts(values);
+  const operation = p.undo + ' ' + Math.abs(p.b) + ' on both sides.';
+  return {
+    ...p, kind: 'step', label: 'Write a step', title: 'Write the next equation',
+    prompt: operation + ' Enter the equation you get before dividing.',
+    correction: term(p.a) + '=' + fmt(p.c - p.b),
+    hint: 'The constant on the left becomes zero. Apply the same operation to the number on the right.',
+    solution: operation + ' This gives ' + term(p.a) + ' = ' + fmt(p.c - p.b) + '.',
   };
 }
 
@@ -98,10 +112,10 @@ export function plan(seed, repeat) {
   const solve = { a, b: draw(seed + 2, 2, 8), x: draw(seed + 3, 2, 7) };
   const divisor = draw(seed + 4, 2, 5);
   const flex = [
-    inverseItem({ a: 1, b: -3, x: draw(seed + 22, 5, 9) }),
-    solveItem('solve', { a: 2, b: 3, x: draw(seed + 23, 2, 8) }),
+    stepItem({ a: 2, b: -3, x: draw(seed + 22, 5, 9) }),
+    stepItem({ a: 3, b: 3, x: draw(seed + 23, 2, 8) }),
     repairItem({ a: 3, b: 6, x: draw(seed + 24, 2, 7) }),
-  ].map(question => ({ ...question, flex: true }));
+  ].map((question, index) => ({ ...question, flex: index !== 0 }));
   if (!repeat) return [inverseItem(first), solveItem('solve', second), explainItem(second), repairItem(repair), ...flex, solveItem('transfer', transfer)];
   return [
     inverseItem({ a: 1, b: draw(seed + 5, 2, 9), x: draw(seed + 6, 3, 11) }),
@@ -113,7 +127,10 @@ export function plan(seed, repeat) {
 }
 
 export function challenge(seed) {
-  return solveItem('challenge', { a: -draw(seed + 12, 2, 5), b: draw(seed + 13, 2, 8), x: -draw(seed + 14, 2, 6) });
+  return {
+    ...solveItem('challenge', { a: -draw(seed + 12, 2, 5), b: draw(seed + 13, 2, 8), x: -draw(seed + 14, 2, 6) }),
+    why: 'You solved two tasks in a row independently. Try a negative coefficient.',
+  };
 }
 
 export function followUp(source, seed) {
@@ -125,22 +142,24 @@ export function followUp(source, seed) {
   return inverseItem({ a: 1, b: sign * (Math.abs(source.b) % 8 + 2), x: draw(seed + 16, 3, 11) });
 }
 
-export function probe(source, teach = false) {
-  const division = source.kind === 'repair';
-  const left = division ? source.b + (teach ? source.a : 0) : teach ? 7 : 9;
-  const right = division ? source.a : teach ? 10 : 14;
-  const eq = fmt(left) + (division ? ' ÷ ' : ' − ') + fmt(right);
-  const x = division ? left / right : left - right;
-  const concept = division
-    ? 'Split ' + source.b + ' objects into ' + right + ' equal groups. Each group has ' + source.b / right + '. Try sharing ' + (source.b + right) + ' objects into the same number of groups.'
-    : 'Start at 9 on a number line. Move 9 steps left to reach zero, then 5 more to reach −5. For this new example, start at 7 and move left 10 steps.';
+export function prerequisite(source) {
+  const b = source.b ?? 5;
+  const start = source.c ?? 12;
+  const change = -b;
+  const direction = change < 0 ? 'left' : 'right';
+  const format = value => fmt(value) + (change < 0 ? ' − ' : ' + ') + Math.abs(change);
+  const example = format(start);
+  const nextStart = start - 1;
+  const x = nextStart + change;
+  const prompt = 'On a number line, start at ' + fmt(start) + ' and move ' + Math.abs(change) + ' steps ' + direction + ' to ' + fmt(start + change) + '. Use that same operation on both sides of a balance. Now try this smaller calculation.';
   return {
-    kind: teach ? 'foundation' : 'probe', label: teach ? 'Prerequisite practice' : 'Quick check',
-    title: teach ? (division ? 'Review equal groups' : 'Review subtracting past zero') : 'Check one smaller step',
-    prompt: teach ? concept : 'This helps the tutor decide what sort of help will be useful.',
-    eq, x, hint: concept,
-    visual: teach ? (division ? { groups: right, size: source.b / right } : { numberLine: true }) : null,
-    solution: eq + ' = ' + fmt(x) + '.',
+    kind: 'foundation', label: 'Integer mini-lesson', title: 'Practise the inverse operation',
+    prompt, eq: format(nextStart), x,
+    balance: source,
+    why: 'The sign error appeared twice. Practise the integer operation before trying another equation.',
+    visual: { start, change, end: start + change },
+    hint: 'Start at ' + fmt(nextStart) + ' and move ' + Math.abs(change) + ' steps ' + direction + '.',
+    solution: example + ' = ' + fmt(start + change) + '. For this question, ' + format(nextStart) + ' = ' + fmt(x) + '.',
   };
 }
 
@@ -154,45 +173,89 @@ function number(text) {
   return Number(value);
 }
 
+function linearTerms(input) {
+  const terms = input.match(/[+-]?(?:\d*x|\d+)/g);
+  if (!terms || terms.join('') !== input || !/^[+-]?(?:\d*x|\d+)(?:[+-](?:\d*x|\d+))*$/.test(input)) return null;
+  const values = [0, 0];
+  for (const part of terms) {
+    if (part.endsWith('x')) {
+      const coefficient = part.slice(0, -1);
+      values[0] += coefficient === '-' ? -1 : coefficient === '+' || !coefficient ? 1 : Number(coefficient);
+    } else {
+      values[1] += Number(part);
+    }
+  }
+  return values.join(',');
+}
+
+function equationMatches(answer, expected) {
+  const sides = normalized(answer).replace(/\s/g, '').split('=').map(linearTerms);
+  if (sides.length !== 2 || !sides.every(Boolean)) return false;
+  const target = normalized(expected).split('=').map(linearTerms);
+  return sides.join('=') === target.join('=') || sides.reverse().join('=') === target.join('=');
+}
+
+function matchesSubstitution(answer, q) {
+  const submitted = normalized(answer).replace(/\s/g, '').replace(/[×·]/g, '*');
+  const constant = (q.b < 0 ? '-' : '+') + Math.abs(q.b);
+  const x = String(q.x);
+  return [q.a + '(' + x + ')' + constant, q.a + '*(' + x + ')' + constant, q.a + '*' + x + constant]
+    .some(expression => submitted === expression || submitted === expression + '=' + q.c);
+}
+
+const numberWords = 'zero one two three four five six seven eight nine ten eleven twelve'.split(' ');
+
 export function explain(text, b, result, rhs) {
-  const s = normalized(text);
+  const s = normalized(text).replace(new RegExp('\\b(?:' + numberWords.join('|') + ')\\b', 'g'), word => String(numberWords.indexOf(word)));
   const n = Math.abs(b);
-  const operation = b < 0 ? '(?:add\\w*|plus|increase\\w*\\s+by)' : '(?:subtract\\w*|minus|take\\w*\\s+away|remove\\w*|reduce\\w*\\s+by)';
-  const namesOperation = new RegExp('\\b' + operation + '\\s+' + n + '\\b').test(s);
-  const both = /\bboth\b|\beach\s+side\b|\bsame\s+(?:operation|thing)\b|\bleft\b.*\bright\b|\bright\b.*\bleft\b/.test(s);
-  const raw = s.replace(/\s/g, '');
+  const add = '(?:add\\w*|plus|increase\\w*\\s+by)';
+  const subtract = '(?:subtract\\w*|minus|remove\\w*|reduce\\w*\\s+by)';
+  const op = (word, amount) => new RegExp('\\b' + word + '\\s+' + amount + '\\b').test(s);
+  const takeAway = new RegExp('\\b(?:take|taking|took)\\s+' + n + '\\s+away\\b').test(s);
+  const namesOperation = b < 0 ? op(add, n) || op(subtract, -n) : op(subtract, n) || op(add, -n) || takeAway;
+  const both = /\b(?:both|each|the two)\s+sides?\b|\bleft\b.*\bright\b|\bright\b.*\bleft\b/.test(s);
+  const raw = s.replace(/\s/g, '').replace(/[.。]$/, '');
   const symbol = b < 0 ? '+' : '-';
   const rhsStep = raw.includes(String(rhs) + symbol + n);
   const lhsStep = raw.includes('x' + (b < 0 ? '-' : '+') + n + symbol + n) || raw.includes('x' + (b < 0 ? '-' : '+') + n + ')' + symbol + n);
-  const wrong = new RegExp('\\b' + (b < 0 ? '(?:subtract\\w*|minus)' : '(?:add\\w*|plus)') + '\\s+' + n + '\\b').test(s);
-  const values = s.match(/(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])/g)?.map(Number) || [];
-  const declaredRight = s.match(/\bright(?:\s+side)?\s+(?:is now|becomes|gives|equals)\s+(-?\d+)\b/);
-  const contradictory = /\bonly\b|\bnot\b.{0,15}\bboth\b/.test(s) || (declaredRight && Number(declaredRight[1]) !== result) || (values.length > 1 && /\b(?:right|equals?|becomes?)\b/.test(s) && values.some(v => ![n, -n, result, rhs].includes(v)));
-  if ((namesOperation && both || rhsStep && lhsStep) && !wrong && !contradictory) return 'correct';
-  if (wrong && !namesOperation) return 'inverse';
+  const wrong = b < 0 ? op(subtract, n) || takeAway : op(add, n);
+  const declaredRight = s.match(/\bright(?:\s+side)?\s+(?:is(?:\s+now)?|becomes|gives|equals)\s+(-?\d+)\b/);
+  const negation = /\b(?:do not|don't|never|cannot|can't|shouldn't|not)\b/.test(s);
+  const oneSide = /\b(?:leave|leaving|keep|keeping|stays?|remains?)\b[^.!?]{0,55}\bunchanged\b|\bonly\b[^.!?]{0,25}\b(?:left|right|1 side)\b|\b(?:left|right|1 side)\b[^.!?]{0,16}\bonly\b/.test(s);
+  const extraOperation = /\b(?:and|then|also|but|afterwards)\s+(?:i\s+)?(?:multiply|divide|add|subtract|remove|change)\w*\b/.test(s);
+  if (oneSide && !negation) return 'one-side-only';
+  if (negation || extraOperation || (declaredRight && Number(declaredRight[1]) !== result)) return 'clarify';
+  if ((namesOperation && both || rhsStep && lhsStep) && !wrong) return 'correct';
+  if (wrong && !namesOperation) return 'sign-flip';
   return 'clarify';
 }
 
 export function assess(q, response) {
-  const { choice, x, check, explanation, correction } = response;
+  const { choice, x, check, explanation, correction, substitution } = response;
   if (q.kind === 'inverse') {
     if (choice === '0') return verdict('correct', q.solution);
     return choice === '1'
-      ? verdict('inverse', 'That operation moves the constant farther from zero. Try the operation that makes ' + (q.b < 0 ? '−' : '+') + Math.abs(q.b) + ' cancel.')
-      : verdict('balance', 'One side changed. What could you do to the other side to keep the values equal?');
+      ? verdict('sign-flip', 'That operation moves the constant farther from zero. Try the operation that makes ' + (q.b < 0 ? '−' : '+') + Math.abs(q.b) + ' cancel.')
+      : verdict('one-side-only', 'One side changed. What could you do to the other side to keep the values equal?');
   }
   if (q.kind === 'explain') {
-    const idea = choice === '0' ? 'correct' : choice === '1' ? 'inverse' : choice === '2' ? 'balance' : explain(explanation, q.b, q.a * q.x, q.c);
+    const idea = choice === '0' ? 'correct' : choice === '1' ? 'sign-flip' : choice === '2' ? 'one-side-only' : explain(explanation, q.b, q.a * q.x, q.c);
     if (idea === 'correct') return verdict('correct', 'You named the operation on both sides. That keeps the two values equal.');
-    if (idea === 'inverse') return verdict('inverse', 'Check which operation cancels the constant. Then say what happens to both sides.');
+    if (idea === 'sign-flip') return verdict(idea, 'Check which operation cancels the constant. Then say what happens to both sides.');
     return verdict(idea, 'I need one more detail. Which operation do you apply, and does it change one side or both?');
   }
-  if (q.kind === 'repair') {
-    const fixed = normalized(correction).replace(/\s/g, '');
-    const [left, right] = q.correction.split('=');
-    if (choice === '1' && [q.correction, right + '=' + left].includes(fixed)) return verdict('correct', q.solution);
-    if (choice === '0') return verdict('division', 'The first line gives the starting equation. Compare the second line with it and look at the constant.');
-    return verdict('division', 'You found the line to inspect. Trace the division through the x term, the constant, and the right side.');
+  if (q.kind === 'repair' || q.kind === 'step') {
+    if (q.kind === 'repair' && choice !== '1') return verdict('locate-error', 'The first line gives the starting equation. Compare the second line with it and look at the constant.');
+    if (equationMatches(correction, q.correction)) return verdict('correct', q.solution);
+    const partial = q.kind === 'repair' && (
+      equationMatches(correction, q.options[1]) || equationMatches(correction, 'x=' + (q.c / q.a + q.b))
+    );
+    const unchanged = equationMatches(correction, term(q.a) + '=' + q.c) || equationMatches(correction, q.expression + '=' + (q.c - q.b));
+    if (partial || unchanged) return verdict('one-side-only', 'Apply the operation to the whole left side and the whole right side.');
+    if (q.kind === 'step' && equationMatches(correction, term(q.a) + '=' + (q.c + q.b))) {
+      return verdict('sign-flip', 'Choose the operation that makes the constant on the left become zero.');
+    }
+    return verdict('equation-step', 'Check what changed on the left and on the right, then try writing the equation again.');
   }
   if (q.kind === 'probe' || q.kind === 'foundation') {
     return number(x) === q.x
@@ -200,13 +263,16 @@ export function assess(q, response) {
       : verdict('arithmetic', 'Let’s focus on that calculation before returning to the equation.');
   }
   if (q.options && choice !== '0') {
-    return verdict(choice === '1' ? 'inverse' : 'balance', 'Start by choosing an operation that cancels the constant and changes both sides equally.');
+    return verdict(choice === '1' ? 'sign-flip' : 'one-side-only', 'Start by choosing an operation that cancels the constant and changes both sides equally.');
   }
-  if (number(x) === q.x && number(check) === q.c) return verdict('correct', 'Your substitution gives ' + fmt(q.c) + ' on both sides. The solution checks out.');
-  if (number(x) === q.x) return verdict('verification', 'Your x value works. Substitute it into the original left side and calculate that value before checking again.');
+  const verified = q.verifyExpression ? matchesSubstitution(substitution, q) : number(check) === q.c;
+  if (number(x) === q.x && verified) return verdict('correct', 'Your substitution gives ' + fmt(q.c) + ' on both sides. The solution checks out.');
+  if (number(x) === q.x) return verdict('verification', q.verifyExpression
+    ? 'Your x value works. Replace x with your value in the original left-side expression.'
+    : 'Your x value works. Replace x with your value and calculate the left side.');
   const wrongSign = (q.c + q.b) / q.a;
   return number(x) === wrongSign
-    ? verdict('inverse', 'Look at the sign of the constant. Use its inverse operation on both sides, then try substituting your new answer.')
+    ? verdict('sign-flip', 'Look at the sign of the constant. Use its inverse operation on both sides, then try substituting your new answer.')
     : verdict('calculation', 'Your x value needs another look. Undo the constant first, then divide by the coefficient of x.');
 }
 
@@ -214,11 +280,12 @@ function verdict(code, message) {
   return { code, message, correct: code === 'correct' };
 }
 
-export function firstRoute(result, history, usedBranch, step) {
-  if (usedBranch || step >= 7) return '';
-  if (!result.correct && ['inverse', 'balance', 'division', 'calculation'].includes(result.code)) return 'probe';
-  const previous = history[step - 1];
-  const current = history[step];
-  if (step === 2 && result.correct && previous?.firstCorrect && !previous.supported && current?.firstCorrect && !current.supported) return 'challenge';
+export function nextRoute(result, streak, misconceptions) {
+  if (result.correct && streak >= 2) return 'challenge';
+  const repeated = misconceptions[result.code] ?? 0;
+  if (repeated > 0 && repeated % 2 === 0) {
+    if (result.code === 'sign-flip') return 'foundation';
+    if (result.code === 'one-side-only') return 'alternative';
+  }
   return '';
 }

@@ -1,4 +1,4 @@
-import { assess, challenge, draw, firstRoute, followUp, lessons, objectives, plan, probe } from './tutor.mjs';
+import { assess, challenge, draw, fmt, followUp, lessons, nextRoute, objectives, plan, prerequisite } from './tutor.mjs';
 
 const storageKey = 'balance-lab-v1';
 const main = document.querySelector('#main');
@@ -87,16 +87,31 @@ const descriptions = [
 function newSession(seed, repeat = false) {
   return {
     seed, step: 0, lesson: 0, view: 'task', questions: plan(seed, repeat), history: [],
-    draft: {}, feedback: null, attempts: 0, hints: false, guided: false, model: false,
-    branch: null, usedBranch: false, recovery: false, status: {}, ability: {},
+    draft: {}, feedback: null, attempts: 0, hints: false, hintEver: false, guided: false, guidedEver: false, model: false,
+    streak: 0, misconceptions: {}, status: {}, ability: {},
     events: [],
   };
 }
 
 function extendSavedSession(s) {
-  if (s?.questions?.length !== 5) return;
-  const extra = plan(s.seed, true).slice(4, 7);
-  s.questions.splice(s.step === 4 ? 5 : 4, 0, ...extra);
+  if (!s?.questions) return;
+  if (s.questions.length === 5) {
+    const extra = plan(s.seed, true).slice(4, 7);
+    s.questions.splice(s.step === 4 ? 5 : 4, 0, ...extra);
+  }
+  if (s.branch) {
+    const replacement = s.questions.findLastIndex((q, i) => i > s.step && q.flex);
+    if (replacement >= 0) {
+      s.questions.splice(replacement, 1);
+      s.questions.splice(s.step, 0, { ...s.branch.question, why: 'Continue the support you opened last time.' });
+    }
+    delete s.branch;
+  }
+  if (s.feedback?.route === 'probe') s.feedback.route = '';
+  s.streak ??= 0;
+  s.misconceptions ??= {};
+  s.hintEver ??= Boolean(s.hints || s.events?.some(event => event.type === 'hint_opened' && event.step === s.step + 1));
+  s.guidedEver ??= Boolean(s.guided);
 }
 
 extendSavedSession(data.session);
@@ -115,7 +130,7 @@ function start() {
 function startDemo(type) {
   demo = newSession(617);
   demo.demoType = type;
-  demo.step = type === 'challenge' ? 1 : 3;
+  demo.step = { challenge: 1, misconception: 3, foundation: 0 }[type];
   go('learn');
 }
 
@@ -238,7 +253,7 @@ function worked(preview) {
 }
 
 function activeQuestion(s) {
-  return s.branch?.question || s.questions[s.step];
+  return s.questions[s.step];
 }
 
 function learning() {
@@ -255,7 +270,7 @@ function fields(q, s) {
     <span>${label}</span><input name="${name}" ${numeric ? 'inputmode="text" spellcheck="false"' : ''} autocomplete="off" required
     maxlength="${numeric ? 24 : 60}" placeholder="${placeholder}" value="${esc(d[name])}"></label>`;
   const options = q.options && (q.kind !== 'explain' || s.guided);
-  const firstOption = draw(s.seed + 31 + s.step * 3 + Number(Boolean(s.branch)), 0, 2);
+  const firstOption = draw(s.seed + 31 + s.step * 3, 0, 2);
   const ordered = q.kind === 'repair' ? [0, 1] : [firstOption, (firstOption + 1) % 3, (firstOption + 2) % 3];
   const radios = options ? `<fieldset><legend>${q.kind === 'repair' ? 'Select the first incorrect line' : q.kind === 'explain' ? 'Choose the matching explanation' : 'Choose your first step'}</legend>
     <div class="options">${ordered.map((index, display) => `<label class="option">
@@ -263,15 +278,24 @@ function fields(q, s) {
     <span class="option-letter" aria-hidden="true">${'ABC'[display]}</span><span>${esc(q.options[index])}</span></label>`).join('')}</div>
     </fieldset>` : '';
   if (q.kind === 'inverse') return radios;
-  if (q.kind === 'repair') return radios + field('correction', 'Corrected equation', 'Enter your corrected line');
+  if (q.kind === 'repair' || q.kind === 'step') return radios + field('correction', q.kind === 'repair' ? 'Corrected equation' : 'Next equation', 'Enter an equation');
   if (q.kind === 'explain') return options ? radios : `<label class="field">
     <span>Your explanation</span><textarea name="explanation" rows="3" required maxlength="400" placeholder="I would…">${esc(d.explanation)}</textarea></label>`;
   if (q.kind === 'probe' || q.kind === 'foundation') return field('x', 'Your answer', 'Enter a number', true);
-  return radios + `<div class="answer-grid">${field('x', 'Value of x', 'Enter x', true)}${field('check', 'Value of the left side', 'After substituting x', true)}</div>`;
+  return radios + `<div class="answer-grid">${field('x', 'Value of x', 'Enter x', true)}${q.verifyExpression
+    ? field('substitution', 'Left side after substitution', 'Enter the full expression')
+    : field('check', 'Value of the left side', 'After substituting x', true)}</div>`;
 }
 
 function workedScaffold(visual) {
   if (!visual) return '';
+  if (Number.isFinite(visual.start)) {
+    const order = visual.change < 0 ? [visual.end, visual.start] : [visual.start, visual.end];
+    const arrow = visual.change < 0 ? '←' : '→';
+    return `<div class="scaffold number-steps" aria-label="Number line from ${fmt(visual.start)} to ${fmt(visual.end)}">
+      <span>${fmt(order[0])}</span> <span aria-hidden="true">${arrow} ${Math.abs(visual.change)} ${arrow}</span> <span>${fmt(order[1])}</span>
+    </div>`;
+  }
   if (visual.numberLine) {
     return `<div class="scaffold number-steps" aria-label="From 9, move left 9 to zero, then left 5 to negative 5">
       <span>−5</span> <span aria-hidden="true">← 5 ←</span> <span>0</span> <span aria-hidden="true">← 9 ←</span> <span>9</span>
@@ -285,7 +309,6 @@ function workedScaffold(visual) {
 
 function activity(s) {
   const q = activeQuestion(s);
-  const branchText = s.branch?.stage === 'alternative' ? s.branch.copy : '';
   const feedback = s.feedback;
   let feedbackTitle = '';
   if (feedback) {
@@ -293,8 +316,8 @@ function activity(s) {
     if (feedback.route === 'challenge') feedbackTitle = 'Ready for a step up';
   }
   const buttons = feedback ? `<div class="actions">
-    ${feedback.correct || feedback.route || s.branch?.stage === 'probe'
-      ? '<button class="button primary" type="button" data-action="advance">' + (feedback.route === 'challenge' ? 'Try a harder question' : feedback.route === 'probe' ? 'Get targeted help' : s.branch?.stage === 'probe' ? (feedback.correct ? 'See another explanation' : 'Review the prerequisite') : 'Continue') + ' ' + icon('arrow') + '</button>'
+    ${feedback.correct || feedback.route
+      ? '<button class="button primary" type="button" data-action="advance">' + ({ challenge: 'Try a harder question', alternative: 'Try the balance model', foundation: 'Practise integers' }[feedback.route] || 'Continue') + ' ' + icon('arrow') + '</button>'
       : '<button class="button primary" type="button" data-action="retry">Try again ' + icon('arrow') + '</button><button class="button quiet" type="button" data-action="show-solution">See a worked answer</button>'}
     ${feedback.code === 'clarify' && q.kind === 'explain' && !s.guided ? '<button class="button quiet" type="button" data-action="guided">Use guided choices</button>' : ''}
     </div>` : `<div class="actions">
@@ -306,13 +329,14 @@ function activity(s) {
   return `<section class="panel lesson-card activity">
     <p class="eyebrow"><span></span> ${esc(q.label)}</p>
     <h1 tabindex="-1">${esc(q.title)}</h1><p class="intro">${esc(q.prompt)}</p>
+    ${q.why ? '<p class="callout"><strong>Why this next?</strong> ' + esc(q.why) + '</p>' : ''}
     ${workedScaffold(q.visual)}
-    ${branchText ? '<div class="callout"><strong>Another way to see it</strong><p>' + esc(branchText) + '</p></div>' : ''}
+    ${q.teaching ? '<div class="callout"><strong>Another way to see it</strong><p>' + esc(q.teaching) + '</p></div>' : ''}
     <div class="equation">${esc(q.eq)}</div>
     <form id="answer-form">
     <fieldset class="answer-set" ${feedback ? 'disabled' : ''}><legend class="sr-only">Answer</legend>${fields(q, s)}</fieldset>
     ${s.hints ? '<div class="callout hint" role="status"><strong>' + icon('hint', 17) + ' Hint</strong><p>' + esc(q.hint) + '</p></div>' : ''}
-    ${feedback ? '<div id="feedback" class="feedback ' + (feedback.correct ? 'success' : 'support') + '" tabindex="-1"><strong>' + icon(feedback.correct ? 'check' : 'hint', 18) + ' ' + feedbackTitle + '</strong><p>' + esc(feedback.message) + '</p>' + (feedback.route === 'challenge' ? '<p>You solved the equation and explained why the same operation works on both sides.</p>' : '') + '</div>' : ''}
+    ${feedback ? '<div id="feedback" class="feedback ' + (feedback.correct ? 'success' : 'support') + '" tabindex="-1"><strong>' + icon(feedback.correct ? 'check' : 'hint', 18) + ' ' + feedbackTitle + '</strong><p>' + esc(feedback.message) + '</p></div>' : ''}
     ${model}${s.model ? '' : buttons}
     </form>
   </section>`;
@@ -358,8 +382,8 @@ function progress() {
       </div>
       <details class="demo-notes"><summary>Show demo walkthroughs</summary><ul>
         <li><strong>Correct reasoning</strong> — enter 6 and 20, then write “I subtract 2 from both sides.” The tutor offers a harder equation.</li>
-        <li><strong>Division misconception</strong> — select the second line, enter <code>x + 6 = 7</code>, then answer 3 for <code>6 ÷ 2</code>. The tutor shows how division reaches each term.</li>
-        <li><strong>Prerequisite gap</strong> — select the second line, enter <code>x + 6 = 7</code>, then answer 2 for <code>6 ÷ 2</code>. The tutor reviews equal groups.</li>
+        <li><strong>Division misconception</strong> — select the second line and enter <code>x = 7 + 6</code>. Try again with the same response. The tutor explains the division using a balance.</li>
+        <li><strong>Prerequisite gap</strong> — choose “Add 5 on both sides” twice on <code>x + 5 = 12</code>. The tutor offers an integer mini-lesson.</li>
       </ul></details>
     </section>
   </div>`;
@@ -372,7 +396,7 @@ function about() {
     <div class="about-grid">
       <section class="panel section-card"><h2>Who it’s for</h2><p>Meera is 13. She knows her multiplication facts and can substitute small integers, but she often loses track of two-sided operations and feels anxious after failing a unit test. She has a shared Android phone for about ten minutes after school.</p>
       <p>She can try a hint, use guided choices for an explanation, and pause without losing her place. Feedback names the mathematical step she can change.</p></section>
-      <section class="panel section-card"><h2>How the tutor adapts</h2><p>Two successful responses with a valid explanation unlock a harder equation. A misconception prompts a quick arithmetic check. The tutor then offers a different explanation or reviews the missing prerequisite and returns to the original problem.</p>
+      <section class="panel section-card"><h2>How the tutor adapts</h2><p>Two independent correct answers in a row lead to a harder question when a practice slot remains. A repeated one-side-only error leads to a balance explanation. A repeated sign error leads to a short integer lesson.</p>
       <p>The tutor generates equations from checked algebra templates and evaluates short explanations with a rule-based rubric. It asks for clarification when the wording is uncertain. Responses stay in this browser.</p></section>
     </div>
     <section class="panel section-card"><h2>Exam card</h2><dl class="card-fields">
@@ -398,7 +422,9 @@ function resetAnswer(s) {
   s.draft = {};
   s.feedback = null;
   s.hints = false;
+  s.hintEver = false;
   s.guided = false;
+  s.guidedEver = false;
   s.attempts = 0;
   s.model = false;
 }
@@ -421,52 +447,36 @@ function nextCore(s) {
     }
     return;
   }
-  if (s.step === 0) s.view = 'worked';
+  if (s.step === 0 && !demo) s.view = 'worked';
   s.step += 1;
-  s.recovery = false;
   resetAnswer(s);
 }
 
-function startBranch(s, stage, question, from = null, copy = '') {
-  s.branch = { stage, question, from, copy };
-  resetAnswer(s);
-  record('adaptive_route', { route: stage });
+function reserveSlot(s) {
+  return s.questions.findLastIndex((q, index) => index > s.step && q.flex);
 }
 
 function move(s) {
-  const outcome = s.feedback;
-  if (s.branch) {
-    const { stage, from } = s.branch;
-    if (stage === 'probe') {
-      if (outcome?.correct) {
-        s.status.route = 'alternative';
-        const copy = from.kind === 'repair'
-          ? 'Place brackets around the whole left side: (' + from.expression + ') ÷ ' + from.a + '. Divide the x term, the constant, and the right side by ' + from.a + '.'
-          : 'Picture two equal sides. Start by making the constant zero, and do the same thing on the other side. You can use the new equation below to try that move.';
-        startBranch(s, 'alternative', followUp(from, s.seed), from, copy);
-      } else {
-        s.status.route = 'foundation';
-        startBranch(s, 'foundation', probe(from, true), from);
-      }
-    } else {
-      s.branch = null;
-      if (stage === 'challenge') nextCore(s);
-      else {
-        s.recovery = true;
-        resetAnswer(s);
-      }
-    }
-  } else if (outcome?.route === 'challenge') {
-    s.status.route = 'challenge';
-    s.usedBranch = true;
-    startBranch(s, 'challenge', challenge(s.seed));
-  } else if (outcome?.route === 'probe') {
-    s.usedBranch = true;
-    const q = activeQuestion(s);
-    startBranch(s, 'probe', probe(q), q);
-  } else {
-    nextCore(s);
+  const next = s.feedback?.route;
+  const reserved = next ? reserveSlot(s) : -1;
+  if (reserved >= 0) {
+    const source = activeQuestion(s);
+    const seed = s.seed + s.step;
+    const question = next === 'challenge' ? challenge(seed) : next === 'foundation' ? prerequisite(source) : {
+      ...followUp(source, seed),
+      why: 'The same operation was missed twice. Try applying it to both sides of a balance.',
+      balance: source,
+      teaching: source.kind === 'repair'
+        ? 'Place brackets around the whole left side: (' + source.expression + ') ÷ ' + source.a + '. Divide the x term, the constant, and the right side by ' + source.a + '.'
+        : 'Picture two equal sides. Make the constant zero on the left and do the same thing to the right.',
+    };
+    s.questions.splice(reserved, 1);
+    s.questions.splice(s.step + 1, 0, question);
+    s.status.route = next;
+    s.streak = 0;
+    record('adaptive_route', { route: next });
   }
+  nextCore(s);
   persist();
   render(true);
 }
@@ -487,17 +497,19 @@ main.addEventListener('submit', event => {
   const q = activeQuestion(s);
   const result = assess(q, s.draft);
   s.attempts += 1;
-  if (!s.branch) {
-    const prior = s.history[s.step];
-    s.history[s.step] = {
-      firstCorrect: prior?.firstCorrect ?? result.correct,
-      correct: prior?.correct || result.correct,
-      supported: Boolean(prior?.supported || s.guided || s.hints || s.recovery || s.attempts > 1),
-      attempts: (prior?.attempts || 0) + 1,
-      code: result.code,
-    };
-  }
-  const next = s.branch ? '' : firstRoute(result, s.history, s.usedBranch, s.step);
+  const prior = s.history[s.step];
+  const supported = Boolean(prior?.supported || s.guidedEver || s.hintEver || s.attempts > 1);
+  s.history[s.step] = {
+    ...prior,
+    firstCorrect: prior?.firstCorrect ?? result.correct,
+    correct: prior?.correct || result.correct,
+    supported,
+    attempts: (prior?.attempts || 0) + 1,
+    code: result.code,
+  };
+  s.streak = result.correct && !supported ? s.streak + 1 : 0;
+  if (!result.correct) s.misconceptions[result.code] = (s.misconceptions[result.code] || 0) + 1;
+  const next = reserveSlot(s) < 0 ? '' : nextRoute(result, s.streak, s.misconceptions);
   s.feedback = { ...result, route: next };
   record('answer_checked', { format: q.kind, result: result.code, guided: s.guided });
   persist();
@@ -544,10 +556,14 @@ main.addEventListener('click', event => {
       break;
     case 'hint':
       s.hints = !s.hints;
-      if (s.hints) record('hint_opened');
+      if (s.hints && !s.hintEver) {
+        s.hintEver = true;
+        record('hint_opened');
+      }
       break;
     case 'guided':
       s.guided = !s.guided;
+      if (s.guided) s.guidedEver = true;
       s.feedback = null;
       delete s.draft.choice;
       break;
