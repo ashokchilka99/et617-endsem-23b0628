@@ -1,0 +1,554 @@
+import { assess, challenge, firstRoute, fmt, followUp, lessons, objectives, plan, probe } from './tutor.mjs';
+
+const storageKey = 'balance-lab-v1';
+const main = document.querySelector('#main');
+const header = document.querySelector('#header');
+const footer = document.querySelector('#footer');
+const iconPaths = {
+  equal: '<path d="M5 9h14M5 15h14"/>',
+  arrow: '<path d="M4.5 12h14m-5.5-5.5L18.5 12 13 17.5"/>',
+  back: '<path d="M19.5 12h-14m5.5 5.5L5.5 12 11 6.5"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3 1.5"/>',
+  book: '<path d="M12 5.5c-1.8-1.6-5.4-1.8-8-1v13.8c3-.8 5.5-.4 8 1.2 2.5-1.6 5-2 8-1.2V4.5c-2.6-.8-6.2-.6-8 1Zm0 0v14"/>',
+  check: '<path d="m5 12 4 4 10-10"/>',
+  hint: '<path d="M9 18h6m-5 3h4M8.6 15.2a5.8 5.8 0 1 1 6.8 0c-.4.3-.4.8-.4 1.3H9c0-.5 0-1-.4-1.3Z"/>',
+  pause: '<path d="M9 5v14m6-14v14"/>',
+  lock: '<rect x="5.5" y="10" width="13" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+  card: '<rect x="4" y="5" width="16" height="14" rx="3"/><path d="M8 10h8m-8 4h5"/>',
+  layers: '<path d="m12 4 8 5-8 5-8-5 8-5Zm-8 9 8 5 8-5m-16 4 8 5 8-5"/>',
+  sparkle: '<path d="M12 3c.7 5 2.2 6.8 7 7.5-4.8.7-6.3 2.5-7 7.5-.7-5-2.2-6.8-7-7.5 4.8-.7 6.3-2.5 7-7.5Z"/><path d="M19 16v5m-2.5-2.5h5"/>',
+};
+
+function icon(name, size = 20) {
+  return `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${iconPaths[name]}</svg>`;
+}
+
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character]);
+}
+
+let storageReady = true;
+let data = { number: 0, session: null, last: null };
+try {
+  const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+  if (saved?.version === 1 && Number.isInteger(saved.number)) data = saved;
+} catch {
+  storageReady = false;
+}
+let demo = null;
+let route = 'home';
+let previewStep = 0;
+let welcomeLine = '';
+
+function save() {
+  if (!storageReady) return;
+  try {
+    localStorage.setItem(storageKey, JSON.stringify({ ...data, version: 1 }));
+  } catch {
+    storageReady = false;
+  }
+}
+
+function session() {
+  return demo || data.session;
+}
+
+function persist() {
+  if (!demo) save();
+}
+
+function go(page) {
+  const next = page === 'home' ? '#home' : '#' + page;
+  if (location.hash === next) {
+    route = page;
+    render(true);
+  } else {
+    location.hash = next;
+  }
+}
+
+function readRoute() {
+  const next = location.hash.slice(1);
+  if (next === 'main') return;
+  route = ['home', 'learn', 'concept', 'progress', 'about'].includes(next) ? next : 'home';
+  if (route === 'learn' && !session() && !data.last) route = 'home';
+  render(true);
+}
+
+const descriptions = [
+  ['Warm-up', 'Choose the move that keeps both sides equal.', 'clock'],
+  ['Worked example', 'See how a balance makes each step visible.', 'book'],
+  ['Practice & feedback', 'Solve, explain and repair equations.', 'layers'],
+  ['Independent check', 'Try a new equation and verify your answer.', 'check'],
+];
+
+function newSession(seed, repeat = false) {
+  return {
+    seed, step: 0, lesson: 0, view: 'task', questions: plan(seed, repeat), history: [],
+    draft: {}, feedback: null, attempts: 0, hints: false, guided: false, model: false,
+    branch: null, usedBranch: false, recovery: false, status: {}, ability: {},
+    events: [],
+  };
+}
+
+function start() {
+  demo = null;
+  if (!data.session) {
+    data.session = newSession(Date.now() % 10000000, data.number > 0);
+    record('session_started');
+    save();
+  }
+  welcomeLine = '';
+  go('learn');
+}
+
+function startDemo(type) {
+  demo = newSession(617);
+  demo.demoType = type;
+  demo.step = type === 'challenge' ? 1 : 3;
+  go('learn');
+}
+
+function record(type, details = {}) {
+  const s = session();
+  if (s) s.events.push({ type, step: s.step + 1, at: Date.now(), ...details });
+}
+
+function phaseOf(s) {
+  if (s.view === 'recap') return 4;
+  if (s.view === 'worked') return 1;
+  return s.step === 0 ? 0 : s.step === 4 ? 3 : 2;
+}
+
+const phaseNames = ['Warm-up', 'See how', 'Practice', 'Check', 'Recap'];
+
+function render(focus = false) {
+  document.title = (route === 'home' ? 'Balance Lab · Class 8 Algebra' : ({ learn: 'Practice', concept: 'Worked example', progress: 'Progress', about: 'About' })[route] + ' · Balance Lab');
+  header.innerHTML = `<div class="site-header wrap">
+    <a class="brand" href="#home" aria-label="Balance Lab home">
+      <span class="brand-mark">${icon('equal', 23)}</span><span>Balance Lab</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="#home" ${['home', 'learn', 'concept'].includes(route) ? 'aria-current="page"' : ''}>Learn</a>
+      <a href="#progress" ${route === 'progress' ? 'aria-current="page"' : ''}>My progress</a>
+      <a href="#about" ${route === 'about' ? 'aria-current="page"' : ''}>About</a>
+    </nav>
+    <span class="course">ET 617</span>
+  </div>`;
+  footer.innerHTML = `<div class="wrap footer-inner"><span><strong>Balance Lab</strong> · Class 8 Algebra</span><span>ET 617 <b>·</b> 23b0628</span></div>`;
+
+  switch (route) {
+    case 'learn': main.innerHTML = learning(); break;
+    case 'concept': main.innerHTML = worked(true); break;
+    case 'progress': main.innerHTML = progress(); break;
+    case 'about': main.innerHTML = about(); break;
+    default: main.innerHTML = home();
+  }
+  if (focus) {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    main.querySelector('h1')?.focus({ preventScroll: true });
+  }
+}
+
+function scale() {
+  return `<figure class="scale-panel" aria-label="Balance diagram. Three x blocks plus four balance nineteen.">
+    <div class="scale-caption">${icon('equal', 18)} The balance model</div>
+    <div class="scale-art" aria-hidden="true">
+      <div class="scale-grid"></div>
+      <div class="scale-pan pan-left">
+        <div class="pan-tiles"><i>x</i><i>x</i><i>x</i><i class="plus-tile">+4</i></div>
+        <div class="pan-base"></div>
+      </div>
+      <div class="scale-pan pan-right"><div class="pan-tiles"><i class="right-tile">19</i></div><div class="pan-base"></div></div>
+      <div class="scale-beam"></div><div class="scale-pin">=</div><div class="scale-stand"></div><div class="scale-foot"></div>
+    </div>
+    <figcaption><span>3x + 4</span><b>=</b><span>19</span></figcaption>
+  </figure>`;
+}
+
+function home() {
+  const active = data.session;
+  const progress = data.last?.ability || {};
+  return `<div class="wrap home">
+    ${welcomeLine ? ' <p class="notice" role="status">' + esc(welcomeLine) + '</p>' : ''}
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow"><span></span> Class 8 mathematics</p>
+        <h1 tabindex="-1">Find the<br><em>balance.</em></h1>
+        <p class="lede">Get comfortable with linear equations, one small step at a time.</p>
+        <div class="hero-actions">
+          <button class="button primary" data-action="start">${active ? 'Resume practice' : 'Start practice'} ${icon('arrow')}</button>
+          <a class="button quiet" href="#concept">${icon('book', 18)} See an example</a>
+        </div>
+        <p class="time-note">${icon('clock', 17)} About 10 minutes <span>·</span> Pause anytime</p>
+      </div>
+      ${scale()}
+    </section>
+    <div class="home-grid">
+      <section class="panel session-map" aria-labelledby="map-title">
+        <div class="section-top"><div class="icon-chip">${icon('layers')}</div><div><h2 id="map-title">Your session</h2><p>From the first move to checking your own answer.</p></div></div>
+        <div class="map-items">
+        ${descriptions.map(([title, description, glyph]) => `<div class="map-row"><span class="small-icon">${icon(glyph, 17)}</span><div><strong>${title}</strong><span>${description}</span></div></div>`).join('')}
+        </div>
+      </section>
+      <aside class="panel skills" aria-labelledby="skills-title">
+        <div class="section-top"><div class="icon-chip green">${icon('check')}</div><div><h2 id="skills-title">What you’ll learn</h2><p>Three skills to practise at your pace.</p></div></div>
+        <ul class="skills-list">${objectives.map(([key, title, detail]) => `<li><span class="skill-status ${progress[key] ? 'done' : ''}">${progress[key] ? icon('check', 14) : ''}</span><div><strong>${title}</strong><span>${detail}</span></div></li>`).join('')}</ul>
+        <p class="privacy">${icon('lock', 16)} ${storageReady ? 'Progress stays on this device.' : 'This browser could not save your progress.'}</p>
+      </aside>
+    </div>
+  </div>`;
+}
+
+function learningShell(s, inner) {
+  const phase = phaseOf(s);
+  return `<div class="wrap learning">
+    <div class="lesson-top"><a class="button quiet back" href="#home">${icon('back',17)} Home</a>
+    ${s.view !== 'recap' ? ' <button class="button secondary" data-action="pause">' + icon('pause', 17) + (demo ? 'Exit demo' : 'Pause & save') + '</button>' : ''}</div>
+    ${s.demoType ? '<p class="notice">Demo session · Your practice progress is unchanged.</p>' : ''}
+    <ol class="stepper" aria-label="Session steps">
+    ${phaseNames.map((p, i) => `<li class="${i < phase ? 'past' : i === phase ? 'current' : ''}" ${i === phase ? 'aria-current="step"' : ''}><span>${i < phase ? icon('check', 13) : i + 1}</span>${p}</li>`).join('')}
+    </ol>
+    ${inner}
+  </div>`;
+}
+
+function worked(preview) {
+  const s = session();
+  const stage = preview ? previewStep : s.lesson;
+  const lesson = lessons[stage];
+  const panel = `<section class="panel lesson-card">
+    <p class="eyebrow"><span></span> Worked example · ${stage + 1} of ${lessons.length}</p>
+    <h1 tabindex="-1">${lesson.title}</h1><p class="intro">${lesson.text}</p>
+    <div class="example-balance" aria-label="${esc(lesson.equation)}">
+      ${lesson.equation.split(' = ').map((side, index) => (index ? '<span class="equation-equal">=</span>' : '') + '<span>' + esc(side) + '</span>').join('')}
+    </div>
+    ${stage < 2 ? '<p class="callout">Same operation on the left and the right.</p>' : '<p class="callout">Substitution answers the question “Does this value work?”</p>'}
+    <div class="actions">
+      <button class="button primary" data-action="${preview ? stage === 2 ? 'start' : 'preview-next' : 'worked-next'}">${preview && stage === 2 ? 'Start or resume practice' : lesson.action} ${icon('arrow')}</button>
+      ${stage > 0 ? '<button class="button quiet" data-action="' + (preview ? 'preview-back' : 'worked-back') + '">Previous step</button>' : ''}
+    </div>
+  </section>`;
+  if (!preview) return learningShell(s, panel);
+  return `<div class="wrap learning"><div class="lesson-top"><a class="button quiet back" href="#home">${icon('back', 17)} Home</a></div>${panel}</div>`;
+}
+
+function activeQuestion(s) {
+  return s.branch?.question || s.questions[s.step];
+}
+
+function learning() {
+  const s = session();
+  if (!s) return `<div class="wrap learning">${recap(data.last, false)}</div>`;
+  if (s.view === 'worked') return worked(false);
+  if (s.view === 'recap') return learningShell(s, recap(s, Boolean(demo)));
+  return learningShell(s, activity(s));
+}
+
+function fields(q, s) {
+  const d = s.draft;
+  const field = (name, label, placeholder, numeric = false) => `<label class="field">
+    <span>${label}</span><input name="${name}" ${numeric ? 'inputmode="decimal"' : ''} autocomplete="off" required
+    maxlength="${numeric ? 24 : 60}" placeholder="${placeholder}" value="${esc(d[name])}"></label>`;
+  const options = q.options && (q.kind !== 'explain' || s.guided);
+  const ordered = q.kind === 'repair' ? [0, 1] : [1, 2, 0];
+  const radios = options ? `<fieldset><legend>${q.kind === 'repair' ? 'Select the first incorrect line' : q.kind === 'explain' ? 'Choose the matching explanation' : 'Choose your first step'}</legend>
+    <div class="options">${ordered.map((index, display) => `<label class="option">
+    <input type="radio" name="choice" value="${index}" ${d.choice === String(index) ? 'checked' : ''} required>
+    <span class="option-letter" aria-hidden="true">${'ABC'[display]}</span><span>${esc(q.options[index])}</span></label>`).join('')}</div>
+    </fieldset>` : '';
+  if (q.kind === 'inverse') return radios;
+  if (q.kind === 'repair') return radios + field('correction', 'Corrected equation', 'Enter your corrected line');
+  if (q.kind === 'explain') return options ? radios : `<label class="field">
+    <span>Your explanation</span><textarea name="explanation" rows="3" required maxlength="400" placeholder="I would…">${esc(d.explanation)}</textarea></label>`;
+  if (q.kind === 'probe' || q.kind === 'foundation') return field('x', 'Your answer', 'Enter a number', true);
+  return radios + `<div class="answer-grid">${field('x', 'Value of x', 'Enter x', true)}${field('check', 'Value of the left side', 'After substituting x', true)}</div>`;
+}
+
+function activity(s) {
+  const q = activeQuestion(s);
+  const branchText = s.branch?.stage === 'alternative' ? s.branch.copy : '';
+  const feedback = s.feedback;
+  let feedbackTitle = '';
+  if (feedback) {
+    feedbackTitle = feedback.correct ? 'That works' : feedback.code === 'clarify' ? 'A little more detail' : 'Let’s look at that step';
+    if (feedback.route === 'challenge') feedbackTitle = 'Ready for a step up';
+  }
+  const buttons = feedback ? `<div class="actions">
+    ${feedback.correct || feedback.route || s.branch?.stage === 'probe'
+      ? '<button class="button primary" type="button" data-action="advance">' + (feedback.route === 'challenge' ? 'Try a harder question' : feedback.route === 'probe' ? 'Get targeted help' : s.branch?.stage === 'probe' ? (feedback.correct ? 'See another explanation' : 'Review the prerequisite') : 'Continue') + ' ' + icon('arrow') + '</button>'
+      : '<button class="button primary" type="button" data-action="retry">Try again ' + icon('arrow') + '</button><button class="button quiet" type="button" data-action="show-solution">See a worked answer</button>'}
+    ${feedback.code === 'clarify' && q.kind === 'explain' && !s.guided ? '<button class="button quiet" type="button" data-action="guided">Use guided choices</button>' : ''}
+    </div>` : `<div class="actions">
+    <button class="button primary" type="submit">Check my answer ${icon('arrow')}</button>
+    <button class="button quiet" type="button" data-action="hint" aria-expanded="${s.hints}">${icon('hint', 18)} ${s.hints ? 'Hide hint' : 'Show a hint'}</button>
+    ${q.kind === 'explain' ? '<button class="button quiet" type="button" data-action="guided">' + (s.guided ? 'Write an explanation' : 'Use guided choices') + '</button>' : ''}
+    </div>`;
+  const model = s.model ? `<div class="callout model"><strong>Worked answer</strong><p>${esc(q.solution)}</p><button class="button secondary" type="button" data-action="advance">Continue ${icon('arrow', 16)}</button></div>` : '';
+  return `<section class="panel lesson-card activity">
+    <p class="eyebrow"><span></span> ${esc(q.label)} ${!s.branch ? '<b>·</b> Task ' + (s.step + 1) + ' of 5' : ''}</p>
+    <h1 tabindex="-1">${esc(q.title)}</h1><p class="intro">${esc(q.prompt)}</p>
+    ${branchText ? '<div class="callout"><strong>Another way to see it</strong><p>' + esc(branchText) + '</p></div>' : ''}
+    <div class="equation">${esc(q.eq)}</div>
+    <form id="answer-form">
+    <fieldset class="answer-set" ${feedback ? 'disabled' : ''}><legend class="sr-only">Answer</legend>${fields(q, s)}</fieldset>
+    ${s.hints ? '<div class="callout hint" role="status"><strong>' + icon('hint', 17) + ' Hint</strong><p>' + esc(q.hint) + '</p></div>' : ''}
+    ${feedback ? '<div id="feedback" class="feedback ' + (feedback.correct ? 'success' : 'support') + '" tabindex="-1"><strong>' + icon(feedback.correct ? 'check' : 'hint', 18) + ' ' + feedbackTitle + '</strong><p>' + esc(feedback.message) + '</p>' + (feedback.route === 'challenge' ? '<p>You solved the equation and explained why the same operation works on both sides.</p>' : '') + '</div>' : ''}
+    ${model}${s.model ? '' : buttons}
+    </form>
+  </section>`;
+}
+
+function recap(s, isDemo) {
+  const notes = {
+    challenge: 'You were ready for a harder question after solving and explaining a step.',
+    alternative: 'You saw the same operation another way and tried a fresh equation.',
+    foundation: 'You practised a smaller arithmetic step and returned to your equation.',
+  };
+  const outcome = s.status?.route;
+  return `<section class="panel lesson-card recap">
+    <div class="icon-chip green">${icon('check', 25)}</div>
+    <h1 tabindex="-1">Session complete.</h1>
+    <p class="intro">Take a moment to notice what you can do now.</p>
+    <ul class="skills-list">${objectives.map(([key, title, detail]) => `<li>
+      <span class="skill-status ${s.ability?.[key] ? 'done' : ''}">${s.ability?.[key] ? icon('check', 14) : ''}</span>
+      <div><strong>${title}</strong><span>${outcomeLabel(s.ability?.[key], 'Keep practising. ' + detail)}</span></div>
+    </li>`).join('')}</ul>
+    ${notes[outcome] ? '<p class="callout">' + notes[outcome] + '</p>' : ''}
+    <div class="actions"><button class="button primary" data-action="finish">${isDemo ? 'Exit demo' : 'Back to learning home'} ${icon('arrow')}</button><a href="#progress" class="button quiet">View progress</a></div>
+  </section>`;
+}
+
+function progress() {
+  const s = data.session || data.last;
+  return `<div class="wrap reading-page">
+    <p class="eyebrow"><span></span> Practice on this device</p><h1 tabindex="-1">My progress</h1>
+    <p class="intro">Review the skills you have shown and pick up where you left off.</p>
+    <section class="panel section-card"><h2>Learning outcomes</h2>
+      <ul class="skills-list">${objectives.map(([key, title, detail]) => `<li><span class="skill-status ${s?.ability?.[key] ? 'done' : ''}">${s?.ability?.[key] ? icon('check', 14) : ''}</span><div><strong>${title}</strong><span>${outcomeLabel(s?.ability?.[key], detail)}</span></div></li>`).join('')}</ul>
+      <p class="muted">${data.number} ${data.number === 1 ? 'session' : 'sessions'} completed.</p>
+      <button class="button primary" data-action="start">${data.session ? 'Resume practice' : 'Start practice'} ${icon('arrow')}</button>
+    </section>
+    <section class="panel section-card"><h2>Try the tutor’s paths</h2><p class="muted">These short demos use the same checks as a normal session. They do not affect your progress.</p>
+      <div class="demo-grid">
+      <button class="button secondary" data-action="demo-challenge">Correct reasoning ${icon('arrow', 16)}</button>
+      <button class="button secondary" data-action="demo-misconception">Division misconception ${icon('arrow', 16)}</button>
+      <button class="button secondary" data-action="demo-foundation">Prerequisite gap ${icon('arrow', 16)}</button>
+      </div>
+      <details class="demo-notes"><summary>Show demo walkthroughs</summary><ul>
+        <li><strong>Correct reasoning</strong> — enter 6 and 20, then write “I subtract 2 from both sides.” The tutor offers a harder equation.</li>
+        <li><strong>Division misconception</strong> — select the second line, enter <code>x + 6 = 7</code>, then answer 3 for <code>6 ÷ 2</code>. The tutor shows how division reaches each term.</li>
+        <li><strong>Prerequisite gap</strong> — select the second line, enter <code>x + 6 = 7</code>, then answer 2 for <code>6 ÷ 2</code>. The tutor reviews equal groups.</li>
+      </ul></details>
+    </section>
+  </div>`;
+}
+
+function about() {
+  return `<div class="wrap reading-page">
+    <p class="eyebrow"><span></span> Course ET 617</p><h1 tabindex="-1">About Balance Lab</h1>
+    <p class="intro">An adaptive tutor for Class 8 learners who want another chance at linear equations.</p>
+    <div class="about-grid">
+      <section class="panel section-card"><h2>Who it’s for</h2><p>Meera is 13. She knows her multiplication facts and can substitute small integers, but she often loses track of two-sided operations and feels anxious after failing a unit test. She has a shared Android phone for about ten minutes after school.</p>
+      <p>She can try a hint, use guided choices for an explanation, and pause without losing her place. Feedback names the mathematical step she can change.</p></section>
+      <section class="panel section-card"><h2>How the tutor adapts</h2><p>Two successful responses with a valid explanation unlock a harder equation. A misconception prompts a quick arithmetic check. The tutor then offers a different explanation or reviews the missing prerequisite and returns to the original problem.</p>
+      <p>The tutor generates equations from checked algebra templates and evaluates short explanations with a rule-based rubric. It asks for clarification when the wording is uncertain. Responses stay in this browser.</p></section>
+    </div>
+    <section class="panel section-card"><h2>Exam card</h2><dl class="card-fields">
+      <div><dt>P4</dt><dd>Adaptive tutor with automatic question generation</dd></div>
+      <div><dt>P4-T3</dt><dd>Linear equations in one variable · Class 8</dd></div>
+      <div><dt>L5</dt><dd>Learner repeating the topic after failing once</dd></div>
+      <div><dt>C4</dt><dd>10-minute sessions with pause and resume</dd></div>
+      <div><dt>ID</dt><dd>23b0628</dd></div>
+    </dl></section>
+  </div>`;
+}
+
+function outcomeLabel(level, missing) {
+  if (!level) return missing;
+  return level === 'supported' ? 'Demonstrated with support.' : 'Demonstrated independently.';
+}
+
+function resetAnswer(s) {
+  s.draft = {};
+  s.feedback = null;
+  s.hints = false;
+  s.guided = false;
+  s.attempts = 0;
+  s.model = false;
+}
+
+function nextCore(s) {
+  const q = s.questions[s.step];
+  const prior = s.history[s.step] || {};
+  const solved = prior.correct || Boolean(s.feedback?.correct);
+  s.history[s.step] = { ...prior, correct: solved };
+  const outcome = { explain: 'balance', repair: 'repair', transfer: 'solve' }[q.kind];
+  if (solved && outcome) s.ability[outcome] = prior.supported ? 'supported' : 'independent';
+
+  if (s.step === 4) {
+    s.view = 'recap';
+    record('session_completed', { ability: s.ability });
+    if (!demo) {
+      data.last = s;
+      data.number += 1;
+      data.session = null;
+    }
+    return;
+  }
+  if (s.step === 0) s.view = 'worked';
+  s.step += 1;
+  s.recovery = false;
+  resetAnswer(s);
+}
+
+function startBranch(s, stage, question, from = null, copy = '') {
+  s.branch = { stage, question, from, copy };
+  resetAnswer(s);
+  record('adaptive_route', { route: stage });
+}
+
+function move(s) {
+  const outcome = s.feedback;
+  if (s.branch) {
+    const { stage, from } = s.branch;
+    if (stage === 'probe') {
+      if (outcome?.correct) {
+        s.status.route = 'alternative';
+        const copy = from.kind === 'repair'
+          ? 'Place brackets around the whole left side: (' + from.expression + ') ÷ ' + from.a + '. Divide the x term, the constant, and the right side by ' + from.a + '.'
+          : 'Picture two equal sides. Start by making the constant zero, and do the same thing on the other side. You can use the new equation below to try that move.';
+        startBranch(s, 'alternative', followUp(from, s.seed), from, copy);
+      } else {
+        s.status.route = 'foundation';
+        startBranch(s, 'foundation', probe(from, true), from);
+      }
+    } else {
+      s.branch = null;
+      if (stage === 'challenge') nextCore(s);
+      else {
+        s.recovery = true;
+        resetAnswer(s);
+      }
+    }
+  } else if (outcome?.route === 'challenge') {
+    s.status.route = 'challenge';
+    s.usedBranch = true;
+    startBranch(s, 'challenge', challenge(s.seed));
+  } else if (outcome?.route === 'probe') {
+    s.usedBranch = true;
+    const q = activeQuestion(s);
+    startBranch(s, 'probe', probe(q), q);
+  } else {
+    nextCore(s);
+  }
+  persist();
+  render(true);
+}
+
+main.addEventListener('input', event => {
+  const field = event.target;
+  if (field.form?.id !== 'answer-form' || !session()) return;
+  session().draft[field.name] = field.value;
+  persist();
+});
+
+main.addEventListener('submit', event => {
+  if (event.target.id !== 'answer-form') return;
+  event.preventDefault();
+  const s = session();
+  if (!s || s.feedback) return;
+  s.draft = Object.fromEntries(new FormData(event.target));
+  const q = activeQuestion(s);
+  const result = assess(q, s.draft);
+  s.attempts += 1;
+  if (!s.branch) {
+    const prior = s.history[s.step];
+    s.history[s.step] = {
+      firstCorrect: prior?.firstCorrect ?? result.correct,
+      correct: prior?.correct || result.correct,
+      supported: Boolean(prior?.supported || s.guided || s.hints || s.recovery || s.attempts > 1),
+      attempts: (prior?.attempts || 0) + 1,
+      code: result.code,
+    };
+  }
+  const next = s.branch ? '' : firstRoute(q, result, s.history, s.usedBranch, s.step);
+  s.feedback = { ...result, route: next };
+  record('answer_checked', { format: q.kind, result: result.code, guided: s.guided });
+  persist();
+  render();
+  document.querySelector('#feedback')?.focus();
+});
+
+main.addEventListener('click', event => {
+  const button = event.target.closest('[data-action]');
+  if (!button) return;
+  const action = button.dataset.action;
+  const s = session();
+  if (action === 'start') return start();
+  if (action.startsWith('demo-')) return startDemo(action.slice(5));
+  if (action === 'preview-next' || action === 'preview-back') {
+    previewStep += action === 'preview-next' ? 1 : -1;
+    return render(true);
+  }
+  if (action === 'pause' || action === 'finish') {
+    if (s?.demoType) demo = null;
+    else if (action === 'pause') {
+      record('session_paused');
+      save();
+      welcomeLine = storageReady ? 'Your place is saved. Resume whenever you’re ready.' : 'Your place is available while this tab stays open.';
+    } else {
+      welcomeLine = '';
+    }
+    return go('home');
+  }
+  if (!s) return;
+  switch (action) {
+    case 'worked-next':
+      if (s.lesson === lessons.length - 1) s.view = 'task';
+      else s.lesson += 1;
+      break;
+    case 'worked-back':
+      s.lesson -= 1;
+      break;
+    case 'advance':
+      return move(s);
+    case 'retry':
+      s.feedback = null;
+      s.model = false;
+      break;
+    case 'hint':
+      s.hints = !s.hints;
+      if (s.hints) record('hint_opened');
+      break;
+    case 'guided':
+      s.guided = !s.guided;
+      s.feedback = null;
+      delete s.draft.choice;
+      break;
+    case 'show-solution':
+      s.model = true;
+      record('worked_answer_opened');
+      break;
+    default:
+      return;
+  }
+  persist();
+  const localChange = ['retry', 'hint', 'guided', 'show-solution'].includes(action);
+  render(!localChange);
+  if (action === 'hint') main.querySelector('[data-action="hint"]')?.focus({ preventScroll: true });
+  if (action === 'retry' || action === 'guided') main.querySelector('#answer-form input, #answer-form textarea')?.focus({ preventScroll: true });
+  if (action === 'show-solution') main.querySelector('.model button')?.focus({ preventScroll: true });
+});
+
+window.addEventListener('hashchange', event => {
+  if (new URL(event.oldURL).hash === '#concept') previewStep = 0;
+  if (new URL(event.newURL).hash === '#learn' && session()) {
+    record('session_entered');
+    persist();
+  }
+  readRoute();
+});
+readRoute();
