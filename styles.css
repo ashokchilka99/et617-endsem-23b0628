@@ -201,6 +201,56 @@ input::placeholder, textarea::placeholder { color: #6f687c; }
   .footer-inner { min-height: 58px; padding-block: 9px; }
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .home .pan-tiles,
+  .activity .pan-tiles {
+    animation: balance-tiles-settle 350ms cubic-bezier(.22, .68, .34, 1);
+  }
+
+  .example-balance > span:not(.equation-equal) {
+    animation: balance-equation-settle 230ms ease-out;
+  }
+
+  .feedback,
+  .notice {
+    animation: balance-feedback-arrive 190ms ease-out;
+  }
+
+  .recap > .icon-chip {
+    animation: balance-check-settle 270ms ease-out;
+  }
+
+  .button {
+    transition-property: background, box-shadow, border-color, translate;
+  }
+
+  .button:active:not(:disabled) {
+    translate: 0 1px;
+  }
+
+  @keyframes balance-tiles-settle {
+    0% { transform: translateY(-8px); }
+    72% { transform: translateY(1px); }
+    100% { transform: translateY(0); }
+  }
+
+  @keyframes balance-equation-settle {
+    from { transform: translateY(4px); }
+    to { transform: translateY(0); }
+  }
+
+  @keyframes balance-feedback-arrive {
+    from { opacity: .78; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes balance-check-settle {
+    0% { transform: scale(.92); }
+    72% { transform: scale(1.03); }
+    100% { transform: scale(1); }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
