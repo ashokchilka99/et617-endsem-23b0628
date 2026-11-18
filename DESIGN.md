@@ -1,7 +1,7 @@
 # ET 617 End-Semester Design
 
 **Exam card** — P4 Adaptive tutor with automatic question generation · P4-T3 Linear equations in one variable (Class 8) · L5 Learner repeating the topic after failing once · C4 10-minute sessions  
-**Identity token** — `23b0628`
+**Identity token** — `23B0628`
 
 ## Educational problem
 
@@ -42,25 +42,35 @@ For `3x + 4 = 19`, subtract 4 from both sides to get `3x = 15`. Divide both side
 | 2 · Enter a number | Solve `3x + 2 = 20`. Enter `x`, then enter the value of `3x + 2` at your answer. | `x = 6` and `3(6) + 2 = 20`. | **Correct:** “Both sides equal 20 when `x = 6`.” **Retry:** “Put your value into `3x + 2`. If it gives a number other than 20, start by undoing the `+2`.” |
 | 3 · Explain a step | Why does `3x + 2 = 20` become `3x = 18`? State what happens to each side. | “I subtract 2 from each side. The left becomes `3x` and the right becomes 18.” | **Correct:** “You named the operation and applied it to both sides, keeping the values equal.” **Incomplete:** “You described the left side. What did you do to 20?” |
 | 4 · Spot and repair an error | A learner writes `2x + 6 = 14 → x + 6 = 7`. Tap the first line after the change and enter its correction if the learner divides first. | The second line is invalid. Dividing both sides and every left-side term by 2 gives `x + 3 = 7`. | **Correct:** “You divided `2x`, `6`, and `14` by 2.” **M2:** “You divided `2x` and `14` by 2. What happens to the `+6` when you divide the whole left side?” |
-| 5 · Solve and verify a new equation | Solve `4x − 3 = 13`. Show your first step and check your solution. | Add 3 to both sides to get `4x = 16`, so `x = 4`. Check `4(4) − 3 = 13`. | **Correct:** “Adding 3 undoes subtracting 3. Your substitution gives 13, so the solution checks out.” **M1:** “The equation has `−3`. What can you add to both sides to make that term zero?” |
+| 5 · Enter the next equation | Add 3 to both sides of `2x − 3 = 9`. Enter the equation before dividing. | `2x = 12`. | “The constant on the left becomes zero. Apply the same operation to the number on the right.” |
+| 6 · Enter the next equation | Subtract 3 from both sides of `3x + 3 = 18`. Enter the equation before dividing. | `3x = 15`. | “Check what changed on the left and on the right, then try writing the equation again.” |
+| 7 · Spot and repair an error | Correct `3x + 6 = 27 → x + 6 = 9` after dividing by 3. | `x + 2 = 9`. | “Apply the operation to the whole left side and the whole right side.” |
+| 8 · Solve and verify a new equation | Solve `4x − 3 = 13`. Choose the first operation and write the substituted left side. | Add 3 to both sides, then divide by 4 to get `x = 4`. Enter `4(4) − 3`. It evaluates to `13`. | “Your substitution gives 13 on both sides. The solution checks out.” |
+
+Tasks 5–7 show example numbers from the templates. Two practice slots can be replaced by adaptive activities. The session keeps eight numbered tasks and ends with an independent substitution check.
 
 ### How the tutor selects the next activity
 
-The tutor scores numerical and structured answers against exact arithmetic. For short explanations, it looks for a valid operation and evidence that the learner applied it to both sides. If the explanation is ambiguous, the learner gets a focused follow-up instead of an automatic incorrect mark. The tutor chooses the next activity from the response history and uses parameterized templates to generate a fresh equation for the selected skill. Each generated practice item has a checked solution and a substitution check. A retry uses new numbers while keeping the reasoning demand stable.
+The tutor scores numerical and structured answers against exact arithmetic. For short explanations, it checks for a valid operation on both sides, accepts common paraphrases, and asks for clarification when the reasoning is ambiguous. Retries keep the current equation. An adaptive activity uses a fresh equation or calculation and shows “Why this next?” A hint stays recorded as support after it is closed.
 
 | Evidence | Next action | Example the learner sees |
 | --- | --- | --- |
-| Two consecutive correct responses on the current skill, including one explanation that shows a valid operation on both sides | Generate a harder equation and keep the learner on the same learning outcome. | “Try `−2x + 5 = 13`. Show how you would isolate `−2x`, then check your answer.” Model answer is `x = −4`, with `−2(−4) + 5 = 13`. |
-| A misconception or incomplete explanation, with the relevant arithmetic prerequisite intact | Give an alternative explanation and then a similar question with new numbers. | For M2, display `(2x + 6) ÷ 2 = 14 ÷ 2` and highlight each term. Ask the learner to divide `4x + 8 = 20` by 4. The target step is `x + 2 = 5`. |
-| A diagnostic prompt confirms the learner misses the prerequisite needed for the next step | Teach the prerequisite with one worked example and one check, then return to the saved equation. | If the learner gets `9 − 14` wrong while solving `x + 14 = 9`, show how moving 14 places left from 9 gives `−5`. Ask for `7 − 10` before returning to `x + 14 = 9` and asking the learner to isolate `x`. |
+| Two independent correct responses in a row | Generate a harder equation with a negative coefficient. | `−2x + 5 = 13` has solution `x = −4`. Substitution gives `−2(−4) + 5 = 13`. |
+| The one-side-only tag appears twice | Explain the operation with a balance, then give a similar question. | Show `(2x + 6) ÷ 2 = 14 ÷ 2` and explain that the divisor reaches both terms on the left. |
+| The sign-flip tag appears twice | Show an integer mini-lesson using the original equation’s right side and the inverse of its constant. | For `x + 5 = 12`, move five places left from 12 to reach 7, then ask for `11 − 5`. |
+
+### AI functionality
+
+When a harder question is selected, `GET /api/question?variant=0` (or variant 1–3) asks Vercel AI Gateway for one equation with a specified negative coefficient, bounded integer values, and the four JSON fields `a`, `b`, `c`, and `x`. The server and browser validate the object and solve `(c − b) ÷ a` again before showing the question. Invalid output, timeouts, and unavailable credentials use a checked question labelled **Sample (offline)**. Learner answers and identifying information stay in the browser.
 
 ### Ten-minute session and resume behavior
 
-Plan for about 1 minute to start and try the step-choice prompt, 2 minutes for the worked example, 4 minutes for practice and one short adaptive branch, 2 minutes for the transfer task, and 1 minute for the recap. A session includes at most one adaptive detour. A learner who needs more time can pause at any point, and the tutor saves the current task, draft answer, feedback state, and pending next step in the browser. Returning to the start screen offers **Resume practice** and opens the saved task.
+Plan for about 1 minute for the warm-up, 2 minutes for the worked example, 4 minutes for the practice tasks, 2 minutes for the transfer task, and 1 minute for the recap. Adaptive tasks replace practice slots. **Save & stop** preserves the current task, draft, mastery, misconception tags, history, feedback, and planned next step in the browser. **Resume practice** opens the saved task. The progress bar shows the current step, and the optional practice details show time on task, hints, and retries.
 
-The learner moves through **Start or Resume → Worked Example → Practice → Targeted Feedback or Challenge → Transfer Check → Recap**. The recap names a skill the learner demonstrated and gives one next practice step. The footer on each screen and the About screen display `23b0628`.
+The learner moves through **Start or Resume → Warm-up and Worked Example → Practice and Adaptive Feedback → Transfer Check → Session complete**. The recap distinguishes independent work from supported work and gives one next practice step. The footer on each screen and the About screen display `23B0628`.
 
 ### Contrasting scenarios to verify in the app
 
 - **Correct path.** Meera solves `3x + 2 = 20`, verifies `x = 6`, and explains that subtracting 2 from both sides preserves equality. The tutor confirms her explanation and serves the negative-coefficient challenge.
-- **Misconception path.** Meera changes `2x + 6 = 14` to `x + 6 = 7`. The tutor checks that she can calculate `6 ÷ 2`, highlights where the division must apply, and gives a new equation that tests the same step. The practice stays at the current difficulty.
+- **Misconception path.** Meera twice writes `x = 7 + 6` while correcting `2x + 6 = 14`. The tutor shows the balance and gives a fresh equation that tests the same step.
+- **Prerequisite path.** Meera twice chooses to add 5 on `x + 5 = 12`. The tutor shows why moving left on the number line undoes adding 5, then gives her a smaller subtraction task.

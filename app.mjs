@@ -1,4 +1,4 @@
-import { assess, challenge, draw, fmt, followUp, lessons, nextRoute, objectives, plan, prerequisite } from './tutor.mjs';
+import { assess, challenge, draw, fmt, followUp, lessons, nextRoute, objectives, plan, prerequisite, validateChallenge } from './tutor.mjs';
 
 const storageKey = 'balance-lab-v1';
 const main = document.querySelector('#main');
@@ -41,8 +41,28 @@ let demo = null;
 let route = 'home';
 let previewStep = 0;
 let welcomeLine = '';
+let clock = null;
+let pendingAdvance = null;
+let lastMathField = null;
+
+function saveTaskTime(stop = false) {
+  if (!clock) return;
+  const now = performance.now();
+  const times = clock.session.taskTimes;
+  times[clock.step] = (times[clock.step] || 0) + now - clock.started;
+  if (stop) clock = null;
+  else clock.started = now;
+}
+
+function startTaskTime() {
+  const s = session();
+  if (!clock && route === 'learn' && s?.view === 'task' && !document.hidden && pendingAdvance?.session !== s) {
+    clock = { session: s, step: s.step, started: performance.now() };
+  }
+}
 
 function save() {
+  saveTaskTime();
   if (!storageReady) return;
   try {
     localStorage.setItem(storageKey, JSON.stringify({ ...data, version: 1 }));
@@ -86,9 +106,9 @@ const descriptions = [
 
 function newSession(seed, repeat = false) {
   return {
-    seed, step: 0, lesson: 0, view: 'task', questions: plan(seed, repeat), history: [],
+    seed, step: 0, lesson: 0, lessonComplete: false, view: 'task', questions: plan(seed, repeat), history: [],
     draft: {}, feedback: null, attempts: 0, hints: false, hintEver: false, guided: false, guidedEver: false, model: false,
-    streak: 0, misconceptions: {}, status: {}, ability: {},
+    streak: 0, misconceptions: {}, status: {}, ability: {}, taskTimes: {},
     events: [],
   };
 }
@@ -110,6 +130,8 @@ function extendSavedSession(s) {
   if (s.feedback?.route === 'probe') s.feedback.route = '';
   s.streak ??= 0;
   s.misconceptions ??= {};
+  s.taskTimes ??= {};
+  s.lessonComplete ??= s.view !== 'worked' && s.lesson === lessons.length - 1;
   s.hintEver ??= Boolean(s.hints || s.events?.some(event => event.type === 'hint_opened' && event.step === s.step + 1));
   s.guidedEver ??= Boolean(s.guided);
 }
@@ -140,6 +162,7 @@ function record(type, details = {}) {
 }
 
 function render(focus = false) {
+  saveTaskTime(true);
   document.title = (route === 'home' ? 'Balance Lab · Class 8 Algebra' : ({ learn: 'Practice', concept: 'Worked example', progress: 'Progress', about: 'About' })[route] + ' · Balance Lab');
   header.innerHTML = `<div class="site-header wrap">
     <a class="brand" href="#home" aria-label="Balance Lab home">
@@ -161,25 +184,29 @@ function render(focus = false) {
     case 'about': main.innerHTML = about(); break;
     default: main.innerHTML = home();
   }
+  startTaskTime();
   if (focus) {
     window.scrollTo({ top: 0, behavior: 'instant' });
     main.querySelector('h1')?.focus({ preventScroll: true });
   }
 }
 
-function scale() {
-  return `<figure class="scale-panel" aria-label="Balance diagram. Three x blocks plus four balance nineteen.">
+function scale(question = { a: 3, b: 4, c: 19, expression: '3x + 4' }) {
+  const coefficient = question.a === -1 ? '−x' : fmt(question.a) + 'x';
+  const xTiles = question.a >= 1 && question.a <= 3 ? '<i>x</i>'.repeat(question.a) : '<i>' + esc(coefficient) + '</i>';
+  const constant = question.b >= 0 ? '+' + question.b : fmt(question.b);
+  return `<figure class="scale-panel" aria-label="Balance diagram. ${esc(question.expression)} equals ${esc(fmt(question.c))}.">
     <div class="scale-caption">${icon('equal', 18)} The balance model</div>
     <div class="scale-art" aria-hidden="true">
       <div class="scale-grid"></div>
       <div class="scale-pan pan-left">
-        <div class="pan-tiles"><i>x</i><i>x</i><i>x</i><i class="plus-tile">+4</i></div>
+        <div class="pan-tiles">${xTiles}<i class="plus-tile">${esc(constant)}</i></div>
         <div class="pan-base"></div>
       </div>
-      <div class="scale-pan pan-right"><div class="pan-tiles"><i class="right-tile">19</i></div><div class="pan-base"></div></div>
+      <div class="scale-pan pan-right"><div class="pan-tiles"><i class="right-tile">${esc(fmt(question.c))}</i></div><div class="pan-base"></div></div>
       <div class="scale-beam"></div><div class="scale-pin">=</div><div class="scale-stand"></div><div class="scale-foot"></div>
     </div>
-    <figcaption><span>3x + 4</span><b>=</b><span>19</span></figcaption>
+    <figcaption><span>${esc(question.expression)}</span><b>=</b><span>${esc(fmt(question.c))}</span></figcaption>
   </figure>`;
 }
 
@@ -267,7 +294,7 @@ function learning() {
 function fields(q, s) {
   const d = s.draft;
   const field = (name, label, placeholder, numeric = false) => `<label class="field">
-    <span>${label}</span><input name="${name}" ${numeric ? 'inputmode="text" spellcheck="false"' : ''} autocomplete="off" required
+    <span>${label}</span><input data-math name="${name}" ${numeric ? 'inputmode="text" spellcheck="false"' : ''} autocomplete="off" required
     maxlength="${numeric ? 24 : 60}" placeholder="${placeholder}" value="${esc(d[name])}"></label>`;
   const options = q.options && (q.kind !== 'explain' || s.guided);
   const firstOption = draw(s.seed + 31 + s.step * 3, 0, 2);
@@ -280,7 +307,7 @@ function fields(q, s) {
   if (q.kind === 'inverse') return radios;
   if (q.kind === 'repair' || q.kind === 'step') return radios + field('correction', q.kind === 'repair' ? 'Corrected equation' : 'Next equation', 'Enter an equation');
   if (q.kind === 'explain') return options ? radios : `<label class="field">
-    <span>Your explanation</span><textarea name="explanation" rows="3" required maxlength="400" placeholder="I would…">${esc(d.explanation)}</textarea></label>`;
+    <span>Your explanation</span><textarea data-math name="explanation" rows="3" required maxlength="400" placeholder="I would…">${esc(d.explanation)}</textarea></label>`;
   if (q.kind === 'probe' || q.kind === 'foundation') return field('x', 'Your answer', 'Enter a number', true);
   return radios + `<div class="answer-grid">${field('x', 'Value of x', 'Enter x', true)}${q.verifyExpression
     ? field('substitution', 'Left side after substitution', 'Enter the full expression')
@@ -327,19 +354,44 @@ function activity(s) {
     </div>`;
   const model = s.model ? `<div class="callout model"><strong>Worked answer</strong><p>${esc(q.solution)}</p><button class="button secondary" type="button" data-action="advance">Continue ${icon('arrow', 16)}</button></div>` : '';
   return `<section class="panel lesson-card activity">
-    <p class="eyebrow"><span></span> ${esc(q.label)}</p>
+    <p class="eyebrow"><span></span> ${esc(q.label)}${q.sourceLabel ? ' · ' + esc(q.sourceLabel) : ''}</p>
     <h1 tabindex="-1">${esc(q.title)}</h1><p class="intro">${esc(q.prompt)}</p>
     ${q.why ? '<p class="callout"><strong>Why this next?</strong> ' + esc(q.why) + '</p>' : ''}
     ${workedScaffold(q.visual)}
     ${q.teaching ? '<div class="callout"><strong>Another way to see it</strong><p>' + esc(q.teaching) + '</p></div>' : ''}
+    ${q.balance?.expression ? scale(q.balance) : ''}
     <div class="equation">${esc(q.eq)}</div>
     <form id="answer-form">
     <fieldset class="answer-set" ${feedback ? 'disabled' : ''}><legend class="sr-only">Answer</legend>${fields(q, s)}</fieldset>
+    ${!feedback && q.kind !== 'inverse' && !(q.kind === 'explain' && s.guided) ? symbolKeypad() : ''}
     ${s.hints ? '<div class="callout hint" role="status"><strong>' + icon('hint', 17) + ' Hint</strong><p>' + esc(q.hint) + '</p></div>' : ''}
     ${feedback ? '<div id="feedback" class="feedback ' + (feedback.correct ? 'success' : 'support') + '" tabindex="-1"><strong>' + icon(feedback.correct ? 'check' : 'hint', 18) + ' ' + feedbackTitle + '</strong><p>' + esc(feedback.message) + '</p></div>' : ''}
     ${model}${s.model ? '' : buttons}
     </form>
   </section>`;
+}
+
+const symbols = [['x', 'x'], ['+', 'plus'], ['−', 'minus'], ['÷', 'divide'], ['=', 'equals'], ['×', 'multiply'], ['(', 'open parenthesis'], [')', 'close parenthesis']];
+
+function symbolKeypad() {
+  return `<div class="keypad" role="group" aria-label="Math symbols">
+    ${symbols.map(([symbol, name]) => `<button class="button secondary" type="button" data-action="symbol" data-symbol="${symbol}" aria-label="Insert ${name}">${symbol}</button>`).join('')}
+  </div>`;
+}
+
+function practiceDetails(s) {
+  if (!s) return '';
+  const hintCount = s.events.filter(event => event.type === 'hint_opened').length;
+  const retries = s.history.reduce((total, item) => total + Math.max(0, (item?.attempts || 0) - 1), 0);
+  const tasks = Object.entries(s.taskTimes || {}).filter(([, milliseconds]) => milliseconds > 0);
+  return `<details class="practice-details">
+    <summary>Practice details</summary><p>Hints used: ${hintCount} · Retries: ${retries}</p>
+    ${tasks.length ? '<ul aria-label="Time per task">' + tasks.map(([step, ms]) => {
+      const seconds = Math.max(1, Math.round(ms / 1000));
+      const duration = seconds >= 60 ? Math.floor(seconds / 60) + ' min ' + (seconds % 60) + ' sec' : seconds + ' sec';
+      return '<li>Task ' + (Number(step) + 1) + ': ' + duration + '</li>';
+    }).join('') + '</ul>' : '<p>Task times appear as you practise.</p>'}
+  </details>`;
 }
 
 function recap(s, isDemo) {
@@ -360,6 +412,7 @@ function recap(s, isDemo) {
     </li>`).join('')}</ul>
     ${notes[outcome] ? '<p class="callout">' + notes[outcome] + '</p>' : ''}
     <p class="muted"><strong>Next time</strong> ${nextSkill ? nextSkill[2] : 'Try a new set and explain why each step keeps the two sides equal.'}</p>
+    ${practiceDetails(s)}
     <div class="actions"><button class="button primary" data-action="finish">${isDemo ? 'Exit demo' : 'Back to learning home'} ${icon('arrow')}</button><a href="#progress" class="button quiet">View progress</a></div>
   </section>`;
 }
@@ -372,6 +425,7 @@ function progress() {
     <section class="panel section-card"><h2>Learning outcomes</h2>
       <ul class="skills-list">${objectives.map(([key, title, detail]) => `<li><span class="skill-status ${s?.ability?.[key] ? 'done' : ''}">${s?.ability?.[key] ? icon('check', 14) : ''}</span><div><strong>${title}</strong><span>${outcomeLabel(s?.ability?.[key], detail)}</span></div></li>`).join('')}</ul>
       <p class="muted">${data.number} ${data.number === 1 ? 'session' : 'sessions'} completed.</p>
+      ${practiceDetails(s)}
       <button class="button primary" data-action="start">${data.session ? 'Resume practice' : 'Start practice'} ${icon('arrow')}</button>
     </section>
     <section class="panel section-card"><h2>Try the tutor’s paths</h2><p class="muted">These short demos use the same checks as a normal session. They do not affect your progress.</p>
@@ -397,7 +451,7 @@ function about() {
       <section class="panel section-card"><h2>Who it’s for</h2><p>Meera is 13. She knows her multiplication facts and can substitute small integers, but she often loses track of two-sided operations and feels anxious after failing a unit test. She has a shared Android phone for about ten minutes after school.</p>
       <p>She can try a hint, use guided choices for an explanation, and pause without losing her place. Feedback names the mathematical step she can change.</p></section>
       <section class="panel section-card"><h2>How the tutor adapts</h2><p>Two independent correct answers in a row lead to a harder question when a practice slot remains. A repeated one-side-only error leads to a balance explanation. A repeated sign error leads to a short integer lesson.</p>
-      <p>The tutor generates equations from checked algebra templates and evaluates short explanations with a rule-based rubric. It asks for clarification when the wording is uncertain. Responses stay in this browser.</p></section>
+      <p>The tutor can use AI to generate a harder equation. It checks the answer in code and uses a labelled sample if the service is unavailable. A rule-based rubric checks short explanations. Responses stay in this browser.</p></section>
     </div>
     <section class="panel section-card"><h2>Exam card</h2><dl class="card-fields">
       <div><dt>P4</dt><dd>Adaptive tutor with automatic question generation</dd></div>
@@ -419,6 +473,7 @@ function outcomeLabel(level, missing) {
 }
 
 function resetAnswer(s) {
+  lastMathField = null;
   s.draft = {};
   s.feedback = null;
   s.hints = false;
@@ -447,7 +502,7 @@ function nextCore(s) {
     }
     return;
   }
-  if (s.step === 0 && !demo) s.view = 'worked';
+  if (!demo && !s.lessonComplete && !s.questions[s.step + 1]?.why) s.view = 'worked';
   s.step += 1;
   resetAnswer(s);
 }
@@ -456,13 +511,37 @@ function reserveSlot(s) {
   return s.questions.findLastIndex((q, index) => index > s.step && q.flex);
 }
 
-function move(s) {
+async function generatedChallenge(seed) {
+  try {
+    const response = await fetch('/api/question?variant=' + draw(seed + 101, 0, 3), { signal: AbortSignal.timeout(5400) });
+    if (!response.ok) return null;
+    const { source, question } = await response.json();
+    return source === 'ai' && validateChallenge(question) ? question : null;
+  } catch {
+    return null;
+  }
+}
+
+async function move(s, button) {
+  if (pendingAdvance?.session === s) return;
+  saveTaskTime(true);
   const next = s.feedback?.route;
   const reserved = next ? reserveSlot(s) : -1;
   if (reserved >= 0) {
     const source = activeQuestion(s);
     const seed = s.seed + s.step;
-    const question = next === 'challenge' ? challenge(seed) : next === 'foundation' ? prerequisite(source) : {
+    let generated = null;
+    if (next === 'challenge') {
+      const request = { session: s, step: s.step };
+      pendingAdvance = request;
+      button.disabled = true;
+      button.textContent = 'Preparing your question…';
+      generated = await generatedChallenge(seed);
+      if (pendingAdvance !== request) return;
+      pendingAdvance = null;
+      if (route !== 'learn' || session() !== s || s.step !== request.step) return;
+    }
+    let question = next === 'challenge' ? challenge(seed, generated) : next === 'foundation' ? prerequisite(source) : {
       ...followUp(source, seed),
       why: 'The same operation was missed twice. Try applying it to both sides of a balance.',
       balance: source,
@@ -470,6 +549,11 @@ function move(s) {
         ? 'Place brackets around the whole left side: (' + source.expression + ') ÷ ' + source.a + '. Divide the x term, the constant, and the right side by ' + source.a + '.'
         : 'Picture two equal sides. Make the constant zero on the left and do the same thing to the right.',
     };
+    if (next === 'challenge') {
+      for (let offset = 1; offset <= 12 && s.questions.some(item => item.eq === question.eq); offset += 1) {
+        question = challenge(seed + offset);
+      }
+    }
     s.questions.splice(reserved, 1);
     s.questions.splice(s.step + 1, 0, question);
     s.status.route = next;
@@ -486,6 +570,10 @@ main.addEventListener('input', event => {
   if (field.form?.id !== 'answer-form' || !session()) return;
   session().draft[field.name] = field.value;
   persist();
+});
+
+main.addEventListener('focusin', event => {
+  if (event.target.matches('[data-math]')) lastMathField = event.target.name;
 });
 
 main.addEventListener('submit', event => {
@@ -529,6 +617,8 @@ main.addEventListener('click', event => {
     return render(true);
   }
   if (action === 'pause' || action === 'finish') {
+    saveTaskTime(true);
+    if (pendingAdvance?.session === s) pendingAdvance = null;
     if (s?.demoType) demo = null;
     else if (action === 'pause') {
       record('session_paused');
@@ -542,14 +632,31 @@ main.addEventListener('click', event => {
   if (!s) return;
   switch (action) {
     case 'worked-next':
-      if (s.lesson === lessons.length - 1) s.view = 'task';
+      if (s.lesson === lessons.length - 1) {
+        s.lessonComplete = true;
+        s.view = 'task';
+      }
       else s.lesson += 1;
       break;
     case 'worked-back':
       s.lesson -= 1;
       break;
     case 'advance':
-      return move(s);
+      return move(s, button);
+    case 'symbol': {
+      const fields = [...main.querySelectorAll('#answer-form [data-math]:enabled')];
+      const field = fields.find(item => item.name === lastMathField) || fields[0];
+      if (field) {
+        const start = field.selectionStart ?? field.value.length;
+        const end = field.selectionEnd ?? start;
+        const symbol = button.dataset.symbol;
+        if (field.value.length - (end - start) + symbol.length > field.maxLength) return;
+        field.focus();
+        field.setRangeText(symbol, start, end, 'end');
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      return;
+    }
     case 'retry':
       s.feedback = null;
       s.model = false;
@@ -589,5 +696,17 @@ window.addEventListener('hashchange', event => {
     persist();
   }
   readRoute();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    saveTaskTime(true);
+    persist();
+  } else {
+    startTaskTime();
+  }
+});
+window.addEventListener('pagehide', () => {
+  saveTaskTime(true);
+  persist();
 });
 readRoute();

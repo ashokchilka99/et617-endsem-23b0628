@@ -116,12 +116,6 @@ svg { flex: 0 0 auto; vertical-align: middle; }
 .session-progress progress { display: block; width: 100%; height: 8px; margin-top: 5px; border: 0; border-radius: 8px; accent-color: #79659e; background: #e8e1ee; }
 .session-progress progress::-webkit-progress-bar { background: #e8e1ee; border-radius: 8px; }
 .session-progress progress::-webkit-progress-value { background: #79659e; border-radius: 8px; }
-.stepper { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin: 0 0 15px; padding: 8px 10px; border-radius: 14px; background: #f0edf4; list-style: none; }
-.stepper li { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 5px; color: var(--subtle); font-size: .82rem; text-align: center; border-radius: 9px; }
-.stepper li span { width: 22px; height: 22px; flex: 0 0 auto; border-radius: 50%; background: #e5deee; display: grid; place-items: center; font-size: .72rem; font-weight: 725; }
-.stepper li.current { color: var(--purple); background: #fffdfb; font-weight: 730; }
-.stepper li.current span { background: var(--deep); color: white; }
-.stepper li.past span { color: var(--green); background: var(--green-wash); }
 .lesson-card { padding: clamp(21px, 4.8vw, 43px); }
 .lesson-card h1, .reading-page h1 { margin-top: .55rem; font-size: clamp(2rem, 5vw, 3.1rem); }
 .intro { margin-top: .65rem; color: var(--muted); font-size: 1.02rem; max-width: 66ch; }
@@ -155,6 +149,13 @@ input[disabled], textarea[disabled] { opacity: 1; }
 textarea { resize: vertical; }
 input::placeholder, textarea::placeholder { color: #6f687c; }
 .answer-grid, .about-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.keypad { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.keypad .button { min-width: 44px; padding: 4px 8px; }
+.activity .scale-panel { margin-block: 12px; min-height: 200px; }
+.activity .scale-art { min-height: 125px; }
+.practice-details { margin-block: 10px 14px; color: var(--muted); font-size: .9rem; }
+.practice-details summary { min-height: 44px; align-content: center; cursor: pointer; color: var(--purple); font-weight: 680; }
+.practice-details p, .practice-details ul { margin-block: 5px; }
 .recap .skills-list { margin-block: 18px; }
 .reading-page > .intro { margin-bottom: 17px; }
 .section-card { margin-block: 12px; }
@@ -195,8 +196,6 @@ input::placeholder, textarea::placeholder { color: #6f687c; }
   .session-map, .skills, .section-card { padding: 17px; }
   .learning, .reading-page { padding-block: 13px 28px; }
   .lesson-card { padding: 17px; }
-  .stepper { gap: 2px; padding: 5px; }
-  .stepper li { flex-direction: column; font-size: .71rem; gap: 3px; padding: 4px 1px; }
   .answer-grid { grid-template-columns: 1fr; }
   .actions .primary { flex: 1 1 auto; }
   .footer-inner { min-height: 58px; padding-block: 9px; }

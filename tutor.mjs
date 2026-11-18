@@ -126,9 +126,28 @@ export function plan(seed, repeat) {
   ];
 }
 
-export function challenge(seed) {
+export const challengeSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['a', 'b', 'c', 'x'],
+  properties: { a: { type: 'integer' }, b: { type: 'integer' }, c: { type: 'integer' }, x: { type: 'integer' } },
+};
+
+export function validateChallenge(values) {
+  const keys = challengeSchema.required;
+  if (!values || Array.isArray(values) || typeof values !== 'object' || Object.keys(values).length !== keys.length ||
+    !keys.every(key => Object.hasOwn(values, key) && Number.isInteger(values[key]))) return false;
+  const { a, b, c, x } = values;
+  return a >= -6 && a <= -2 && b >= 2 && b <= 9 && x >= -8 && x <= -2 &&
+    (c - b) / a === x && a * x + b === c;
+}
+
+export function challenge(seed, generated) {
+  const isGenerated = validateChallenge(generated);
+  const values = isGenerated ? generated : { a: -draw(seed + 12, 2, 5), b: draw(seed + 13, 2, 8), x: -draw(seed + 14, 2, 6) };
   return {
-    ...solveItem('challenge', { a: -draw(seed + 12, 2, 5), b: draw(seed + 13, 2, 8), x: -draw(seed + 14, 2, 6) }),
+    ...solveItem('challenge', values),
+    sourceLabel: isGenerated ? 'AI-generated · checked' : 'Sample (offline)',
     why: 'You solved two tasks in a row independently. Try a negative coefficient.',
   };
 }
