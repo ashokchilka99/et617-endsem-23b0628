@@ -1,4 +1,4 @@
-import { assess, challenge, firstRoute, fmt, followUp, lessons, objectives, plan, probe } from './tutor.mjs';
+import { assess, challenge, draw, firstRoute, followUp, lessons, objectives, plan, probe } from './tutor.mjs';
 
 const storageKey = 'balance-lab-v1';
 const main = document.querySelector('#main');
@@ -250,10 +250,11 @@ function learning() {
 function fields(q, s) {
   const d = s.draft;
   const field = (name, label, placeholder, numeric = false) => `<label class="field">
-    <span>${label}</span><input name="${name}" ${numeric ? 'inputmode="decimal"' : ''} autocomplete="off" required
+    <span>${label}</span><input name="${name}" ${numeric ? 'inputmode="text" spellcheck="false"' : ''} autocomplete="off" required
     maxlength="${numeric ? 24 : 60}" placeholder="${placeholder}" value="${esc(d[name])}"></label>`;
   const options = q.options && (q.kind !== 'explain' || s.guided);
-  const ordered = q.kind === 'repair' ? [0, 1] : [1, 2, 0];
+  const firstOption = draw(s.seed + 31 + s.step * 3 + Number(Boolean(s.branch)), 0, 2);
+  const ordered = q.kind === 'repair' ? [0, 1] : [firstOption, (firstOption + 1) % 3, (firstOption + 2) % 3];
   const radios = options ? `<fieldset><legend>${q.kind === 'repair' ? 'Select the first incorrect line' : q.kind === 'explain' ? 'Choose the matching explanation' : 'Choose your first step'}</legend>
     <div class="options">${ordered.map((index, display) => `<label class="option">
     <input type="radio" name="choice" value="${index}" ${d.choice === String(index) ? 'checked' : ''} required>
@@ -265,6 +266,19 @@ function fields(q, s) {
     <span>Your explanation</span><textarea name="explanation" rows="3" required maxlength="400" placeholder="I would…">${esc(d.explanation)}</textarea></label>`;
   if (q.kind === 'probe' || q.kind === 'foundation') return field('x', 'Your answer', 'Enter a number', true);
   return radios + `<div class="answer-grid">${field('x', 'Value of x', 'Enter x', true)}${field('check', 'Value of the left side', 'After substituting x', true)}</div>`;
+}
+
+function workedScaffold(visual) {
+  if (!visual) return '';
+  if (visual.numberLine) {
+    return `<div class="scaffold number-steps" aria-label="From 9, move left 9 to zero, then left 5 to negative 5">
+      <span>−5</span> <span aria-hidden="true">← 5 ←</span> <span>0</span> <span aria-hidden="true">← 9 ←</span> <span>9</span>
+    </div>`;
+  }
+  const dots = '<i></i>'.repeat(visual.size);
+  return `<div class="scaffold group-model" aria-label="${visual.groups} equal groups with ${visual.size} objects in each group">
+    ${('<span aria-hidden="true">' + dots + '</span>').repeat(visual.groups)}
+  </div>`;
 }
 
 function activity(s) {
@@ -290,6 +304,7 @@ function activity(s) {
   return `<section class="panel lesson-card activity">
     <p class="eyebrow"><span></span> ${esc(q.label)} ${!s.branch ? '<b>·</b> Task ' + (s.step + 1) + ' of 5' : ''}</p>
     <h1 tabindex="-1">${esc(q.title)}</h1><p class="intro">${esc(q.prompt)}</p>
+    ${workedScaffold(q.visual)}
     ${branchText ? '<div class="callout"><strong>Another way to see it</strong><p>' + esc(branchText) + '</p></div>' : ''}
     <div class="equation">${esc(q.eq)}</div>
     <form id="answer-form">
@@ -308,6 +323,7 @@ function recap(s, isDemo) {
     foundation: 'You practised a smaller arithmetic step and returned to your equation.',
   };
   const outcome = s.status?.route;
+  const nextSkill = objectives.find(([key]) => s.ability?.[key] !== 'independent');
   return `<section class="panel lesson-card recap">
     <div class="icon-chip green">${icon('check', 25)}</div>
     <h1 tabindex="-1">Session complete.</h1>
@@ -317,6 +333,7 @@ function recap(s, isDemo) {
       <div><strong>${title}</strong><span>${outcomeLabel(s.ability?.[key], 'Keep practising. ' + detail)}</span></div>
     </li>`).join('')}</ul>
     ${notes[outcome] ? '<p class="callout">' + notes[outcome] + '</p>' : ''}
+    <p class="muted"><strong>Next time</strong> ${nextSkill ? nextSkill[2] : 'Try a new set and explain why each step keeps the two sides equal.'}</p>
     <div class="actions"><button class="button primary" data-action="finish">${isDemo ? 'Exit demo' : 'Back to learning home'} ${icon('arrow')}</button><a href="#progress" class="button quiet">View progress</a></div>
   </section>`;
 }
@@ -363,6 +380,10 @@ function about() {
       <div><dt>C4</dt><dd>10-minute sessions with pause and resume</dd></div>
       <div><dt>ID</dt><dd>23b0628</dd></div>
     </dl></section>
+    <section class="panel section-card"><h2>What counts as learning</h2>
+      <p>A learner who can recite “move it across” may still change only one side or divide only the x term. The worked example uses a balance to show why a step is valid. The repair task asks the learner to find the first mistake and correct it before attempting a fresh equation.</p>
+      <p>The recap checks three pieces of evidence. The learner must explain the operation on both sides, repair an incorrect division, and solve and verify a new equation by substitution. It distinguishes independent work from success with a hint, guided choices, or a retry.</p>
+    </section>
   </div>`;
 }
 
@@ -474,7 +495,7 @@ main.addEventListener('submit', event => {
       code: result.code,
     };
   }
-  const next = s.branch ? '' : firstRoute(q, result, s.history, s.usedBranch, s.step);
+  const next = s.branch ? '' : firstRoute(result, s.history, s.usedBranch, s.step);
   s.feedback = { ...result, route: next };
   record('answer_checked', { format: q.kind, result: result.code, guided: s.guided });
   persist();

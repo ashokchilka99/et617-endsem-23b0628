@@ -133,6 +133,7 @@ export function probe(source, teach = false) {
     title: teach ? (division ? 'Review equal groups' : 'Review subtracting past zero') : 'Check one smaller step',
     prompt: teach ? concept : 'This helps the tutor decide what sort of help will be useful.',
     eq, x, hint: concept,
+    visual: teach ? (division ? { groups: right, size: source.b / right } : { numberLine: true }) : null,
     solution: eq + ' = ' + fmt(x) + '.',
   };
 }
@@ -207,10 +208,11 @@ function verdict(code, message) {
   return { code, message, correct: code === 'correct' };
 }
 
-export function firstRoute(q, result, history, usedBranch, step) {
+export function firstRoute(result, history, usedBranch, step) {
   if (usedBranch || step === 4) return '';
-  if (!result.correct && ['inverse', 'balance', 'division', 'calculation', 'clarify'].includes(result.code)) return 'probe';
+  if (!result.correct && ['inverse', 'balance', 'division', 'calculation'].includes(result.code)) return 'probe';
   const previous = history[step - 1];
-  if (step === 2 && result.correct && previous?.firstCorrect) return 'challenge';
+  const current = history[step];
+  if (step === 2 && result.correct && previous?.firstCorrect && !previous.supported && current?.firstCorrect && !current.supported) return 'challenge';
   return '';
 }
